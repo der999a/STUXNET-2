@@ -1,0 +1,173 @@
+name: build-stuxnet
+
+# CI build of the Stuxnet (Telegram-iOS fork) app using the repo's own toolchain:
+# Bazel via build-system/Make/Make.py (see CLAUDE.md / README.md).
+#
+# Signing strategy: UNSIGNED-CI. This uses the in-repo self-signed "fake-codesigning"
+# bundle (build-system/fake-codesigning) exactly like the repo's own verification
+# pipeline does (.gitlab-ci.yml jobs "verifysanity_beta_testflight"/"verify_beta_testflight"
+# and buildbox/build-telegram.sh "verify" mode). Make.py's `build` command has no
+# CODE_SIGNING_ALLOWED=NO-style flag; --codesigningInformationPath pointing at the
+# fake-codesigning directory IS the repo-supported unsigned route. The two alternatives
+# in Make.py do not work on ephemeral CI runners:
+#   --gitCodesigningRepository  -> needs a private fastlane-match git repo (not in-repo)
+#   --xcodeManagedCodesigning   -> needs an Apple ID signed into Xcode on the runner
+# (--disableProvisioningProfiles exists only on `generateProject`, for simulator builds.)
+# The resulting IPA installs on no device; it proves the tree compiles and links.
+# For a distributable build, create your own configuration json + provisioning data
+# per README.md "Advanced Compilation Guide" and set BUILD_CONFIGURATION_PATH below.
+#
+# SUBMODULES CAVEAT: .gitmodules contains two RELATIVE urls — ../rlottie.git and
+# ../tgcalls.git — which resolve against the repo's remote URL. On GitHub they would
+# point at https://github.com/<owner>/rlottie.git and .../tgcalls.git, which do not
+# exist, so `submodules: recursive` would fail IF those paths were committed as real
+# gitlinks. In this tree they are vendored as plain content (no gitlinks), so the
+# recursive checkout is currently a no-op. If they are ever converted to real
+# submodules, pin their urls to absolute upstream ones first, e.g.:
+#   git config submodule.submodules/rlottie/rlottie.url https://github.com/TelegramMessenger/rlottie.git
+#   git config submodule.submodules/TgVoipWebrtc/tgcalls.url https://github.com/TelegramMessenger/tgcalls.git
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+env:
+  # Single point of change if you fork with your own api_id / bundle_id / team_id
+  # (README.md: "Creating your Telegram Application"). The stock
+  # appstore-configuration.json ships with Telegram's own api_id=8; that is what
+  # the repo's own CI used for unsigned builds, so it is kept as the default here.
+  BUILD_CONFIGURATION_PATH: build-system/appstore-configuration.json
+  CODESIGNING_INFO_PATH: build-system/fake-codesigning
+  # Bazel disk-cache directory consumed by Make.py --cacheDir (cached across runs).
+  BAZEL_CACHE_DIR: ${{ github.workspace }}/../telegram-bazel-cache
+  # Canonical source location, mirroring the repo's own .github/workflows/build.yml:
+  # source paths are embedded in the binary, so keep them stable across builds.
+  SOURCE_DIR: /Users/Shared/telegram-ios
+
+jobs:
+  build:
+    runs-on: macos-26 # versions.json pins macos 26 / Xcode 26.2; macos-26 runners are arm64
+    timeout-minutes: 360 # first full Bazel build of this tree takes hours
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive' # see SUBMODULES CAVEAT above
+          fetch-depth: 0 # full history needed for `git rev-list --count HEAD` build number
+
+      - name: Select Xcode matching versions.json
+        run: |
+          set -e
+          XCODE_VERSION=$(python3 -c 'import json; print(json.load(open("versions.json"))["xcode"])')
+          echo "Required Xcode: $XCODE_VERSION"
+          OVERRIDE=""
+          if [ -d "/Applications/Xcode_${XCODE_VERSION}.app" ]; then
+            XCODE_APP="/Applications/Xcode_${XCODE_VERSION}.app"
+          else
+            # Fall back to the newest installed 26.x (python sort: BSD sort has no -V)
+            # and let Make.py override the version check. Empty result -> handled below.
+            XCODE_APP=$(python3 -c "import glob,re; print(max(glob.glob('/Applications/Xcode_26*.app'), key=lambda a: [int(x) for x in re.findall(r'\d+', a.split('/')[-1])]))" 2>/dev/null || true)
+            if [ -z "$XCODE_APP" ]; then
+              echo "No Xcode 26.x found on this runner"; ls -d /Applications/Xcode*.app; exit 1
+            fi
+            OVERRIDE="--overrideXcodeVersion"
+            echo "::warning::Xcode $XCODE_VERSION not installed; using $XCODE_APP with --overrideXcodeVersion"
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+          echo "XCODE_OVERRIDE_FLAG=$OVERRIDE" >> "$GITHUB_ENV"
+
+      - name: Cache Bazel disk cache and toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BAZEL_CACHE_DIR }}
+            build-input
+          key: ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-
+
+      - name: Install Bazel pinned by versions.json
+        run: |
+          set -e
+          BAZEL_SPEC=$(python3 -c 'import json; print(json.load(open("versions.json"))["bazel"])')
+          BAZEL_VERSION="${BAZEL_SPEC%%:*}"
+          BAZEL_SHA256="${BAZEL_SPEC##*:}"
+          # Make.py (build-system/Make/BazelLocation.py) looks for
+          # build-input/bazel-<version>-darwin-arm64 and would download + sha256-verify
+          # it itself; pre-seeding here makes the pin explicit and cacheable.
+          BAZEL_BIN="build-input/bazel-${BAZEL_VERSION}-darwin-arm64"
+          mkdir -p build-input
+          if [ ! -f "$BAZEL_BIN" ]; then
+            curl -L --fail --retry 3 \
+              "https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-darwin-arm64" \
+              --output "$BAZEL_BIN"
+          fi
+          echo "$BAZEL_SHA256  $BAZEL_BIN" | shasum -a 256 -c -
+          chmod +x "$BAZEL_BIN"
+          "$BAZEL_BIN" --version
+
+      - name: Create canonical source directory
+        run: |
+          set -ex
+          sudo mkdir -p /Users/Shared
+          rm -rf "$SOURCE_DIR"
+          sudo cp -R "$GITHUB_WORKSPACE" /Users/Shared/
+          sudo mv "/Users/Shared/$(basename "$GITHUB_WORKSPACE")" "$SOURCE_DIR"
+          sudo chown -R "$USER" "$SOURCE_DIR"
+
+      - name: Import fake codesigning certificates
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+
+      - name: Compute build number
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          # Same formula as buildbox/build-telegram.sh and .github/workflows/build.yml
+          BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
+          COMMIT_COUNT=$(git -C "$GITHUB_WORKSPACE" rev-list --count HEAD)
+          BUILD_NUMBER=$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))
+          APP_VERSION=$(python3 -c 'import json; print(json.load(open("versions.json"))["app"])')
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+          echo "Building Telegram $APP_VERSION ($BUILD_NUMBER)"
+
+      - name: Build the app (unsigned release IPA)
+        working-directory: ${{ env.SOURCE_DIR }}
+        env:
+          # PLACEHOLDER: only needed if BUILD_CONFIGURATION_PATH is switched to a config
+          # that requires real credentials — the stock unsigned route needs none.
+          TELEGRAM_CODESIGNING_GIT_PASSWORD: ""
+        run: |
+          set -ex
+          mkdir -p "$BAZEL_CACHE_DIR"
+          python3 -u build-system/Make/Make.py \
+            --cacheDir="$BAZEL_CACHE_DIR" \
+            $XCODE_OVERRIDE_FLAG \
+            build \
+            --configurationPath="$BUILD_CONFIGURATION_PATH" \
+            --codesigningInformationPath="$CODESIGNING_INFO_PATH" \
+            --configuration=release_arm64 \
+            --buildNumber="$BUILD_NUMBER" \
+            --outputBuildArtifactsPath=build/artifacts
+
+      - name: Package dSYMs
+        working-directory: ${{ env.SOURCE_DIR }}
+        if: success()
+        run: |
+          set -ex
+          # --outputBuildArtifactsPath drops Telegram.ipa + DSYMs/ into build/artifacts
+          cd build/artifacts
+          zip -r Telegram.DSYMs.zip DSYMs 1>/dev/null
+          ls -la
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: stuxnet-${{ env.APP_VERSION }}-${{ env.BUILD_NUMBER }}-unsigned
+          path: |
+            ${{ env.SOURCE_DIR }}/build/artifacts/Telegram.ipa
+            ${{ env.SOURCE_DIR }}/build/artifacts/Telegram.DSYMs.zip
+          if-no-files-found: error
+          retention-days: 14
