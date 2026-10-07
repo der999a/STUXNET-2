@@ -133,13 +133,13 @@ func applySecretOutgoingMessageReadActions(transaction: Transaction, id: Message
     }
 }
 
-func _internal_togglePeerUnreadMarkInteractively(postbox: Postbox, network: Network, viewTracker: AccountViewTracker, peerId: PeerId, setToValue: Bool? = nil) -> Signal<Void, NoError> {
+func _internal_togglePeerUnreadMarkInteractively(postbox: Postbox, network: Network, viewTracker: AccountViewTracker, peerId: PeerId, setToValue: Bool? = nil, accountPeerId: PeerId? = nil) -> Signal<Void, NoError> {
     return postbox.transaction { transaction -> Void in
-        _internal_togglePeerUnreadMarkInteractively(transaction: transaction, network: network, viewTracker: viewTracker, peerId: peerId, setToValue: setToValue)
+        _internal_togglePeerUnreadMarkInteractively(transaction: transaction, network: network, viewTracker: viewTracker, peerId: peerId, setToValue: setToValue, accountPeerId: accountPeerId)
     }
 }
 
-func _internal_toggleForumThreadUnreadMarkInteractively(transaction: Transaction, network: Network, viewTracker: AccountViewTracker, peerId: PeerId, threadId: Int64, setToValue: Bool?) {
+func _internal_toggleForumThreadUnreadMarkInteractively(transaction: Transaction, network: Network, viewTracker: AccountViewTracker, peerId: PeerId, threadId: Int64, setToValue: Bool?, accountPeerId: PeerId? = nil) {
     guard let peer = transaction.getPeer(peerId) else {
         return
     }
@@ -179,11 +179,11 @@ func _internal_toggleForumThreadUnreadMarkInteractively(transaction: Transaction
             }
             
             if peer.isForum {
-                if let inputPeer = apiInputPeer(peer), MiraCoreGate.shared.snapshot(forAccountPeerId: stateManager.accountPeerId).sendReadMessages {
+                if let inputPeer = apiInputPeer(peer), MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).sendReadMessages {
                     let _ = network.request(Api.functions.messages.readDiscussion(peer: inputPeer, msgId: Int32(clamping: threadId), readMaxId: messageIndex.id.id)).start()
                 }
             } else if peer.isMonoForum {
-                if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(threadId)).flatMap(apiInputPeer), MiraCoreGate.shared.snapshot(forAccountPeerId: stateManager.accountPeerId).sendReadMessages {
+                if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(threadId)).flatMap(apiInputPeer), MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).sendReadMessages {
                     let _ = network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeer, maxId: messageIndex.id.id)).start()
                 }
             }
@@ -191,7 +191,7 @@ func _internal_toggleForumThreadUnreadMarkInteractively(transaction: Transaction
     }
 }
 
-func _internal_markForumThreadAsReadInteractively(transaction: Transaction, network: Network, viewTracker: AccountViewTracker, peerId: PeerId, threadId: Int64) {
+func _internal_markForumThreadAsReadInteractively(transaction: Transaction, network: Network, viewTracker: AccountViewTracker, peerId: PeerId, threadId: Int64, accountPeerId: PeerId? = nil) {
     guard let peer = transaction.getPeer(peerId) else {
         return
     }
@@ -215,18 +215,18 @@ func _internal_markForumThreadAsReadInteractively(transaction: Transaction, netw
         }
         
         if peer.isForum {
-            if let inputPeer = apiInputPeer(peer), MiraCoreGate.shared.snapshot(forAccountPeerId: stateManager.accountPeerId).sendReadMessages {
+            if let inputPeer = apiInputPeer(peer), MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).sendReadMessages {
                 let _ = network.request(Api.functions.messages.readDiscussion(peer: inputPeer, msgId: Int32(clamping: threadId), readMaxId: messageIndex.id.id)).start()
             }
         } else if peer.isMonoForum {
-            if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(threadId)).flatMap(apiInputPeer), MiraCoreGate.shared.snapshot(forAccountPeerId: stateManager.accountPeerId).sendReadMessages {
+            if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(threadId)).flatMap(apiInputPeer), MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).sendReadMessages {
                 let _ = network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeer, maxId: messageIndex.id.id)).start()
             }
         }
     }
 }
 
-func _internal_togglePeerUnreadMarkInteractively(transaction: Transaction, network: Network, viewTracker: AccountViewTracker, peerId: PeerId, setToValue: Bool? = nil) {
+func _internal_togglePeerUnreadMarkInteractively(transaction: Transaction, network: Network, viewTracker: AccountViewTracker, peerId: PeerId, setToValue: Bool? = nil, accountPeerId: PeerId? = nil) {
     guard let peer = transaction.getPeer(peerId) else {
         return
     }
@@ -257,11 +257,11 @@ func _internal_togglePeerUnreadMarkInteractively(transaction: Transaction, netwo
                 }
                 
                 if peer.isForum {
-                    if let inputPeer = apiInputPeer(peer), MiraCoreGate.shared.snapshot(forAccountPeerId: stateManager.accountPeerId).sendReadMessages {
+                    if let inputPeer = apiInputPeer(peer), MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).sendReadMessages {
                         let _ = network.request(Api.functions.messages.readDiscussion(peer: inputPeer, msgId: Int32(clamping: item.threadId), readMaxId: messageIndex.id.id)).start()
                     }
                 } else if peer.isMonoForum {
-                    if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(item.threadId)).flatMap(apiInputPeer), MiraCoreGate.shared.snapshot(forAccountPeerId: stateManager.accountPeerId).sendReadMessages {
+                    if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(item.threadId)).flatMap(apiInputPeer), MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).sendReadMessages {
                         let _ = network.request(Api.functions.messages.readSavedHistory(parentPeer: inputPeer, peer: subPeer, maxId: messageIndex.id.id)).start()
                     }
                 }
@@ -329,8 +329,8 @@ public func clearPeerUnseenReactionsAndPollVotesInteractively(account: Account, 
     |> ignoreValues
 }
 
-func _internal_markAllChatsAsReadInteractively(transaction: Transaction, network: Network, viewTracker: AccountViewTracker, groupId: PeerGroupId, filterPredicate: ChatListFilterPredicate?) {
+func _internal_markAllChatsAsReadInteractively(transaction: Transaction, network: Network, viewTracker: AccountViewTracker, groupId: PeerGroupId, filterPredicate: ChatListFilterPredicate?, accountPeerId: PeerId? = nil) {
     for peerId in transaction.getUnreadChatListPeerIds(groupId: groupId, filterPredicate: filterPredicate, additionalFilter: nil, stopOnFirstMatch: false) {
-        _internal_togglePeerUnreadMarkInteractively(transaction: transaction, network: network, viewTracker: viewTracker, peerId: peerId, setToValue: false)
+        _internal_togglePeerUnreadMarkInteractively(transaction: transaction, network: network, viewTracker: viewTracker, peerId: peerId, setToValue: false, accountPeerId: accountPeerId)
     }
 }

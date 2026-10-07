@@ -25,7 +25,7 @@ name: build-stuxnet
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    tags: [ 'stuxnet-*' ]
 
 # A newer push cancels the superseded in-progress run (saves runner hours).
 concurrency:
@@ -97,8 +97,9 @@ jobs:
           fi
           echo "XCODE_OVERRIDE_FLAG=$OVERRIDE" >> "$GITHUB_ENV"
 
-      - name: Cache Bazel disk cache and toolchain
-        uses: actions/cache@v4
+      - name: Restore Bazel disk cache and toolchain
+        id: bazel-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ${{ env.BAZEL_CACHE_DIR }}
@@ -106,9 +107,6 @@ jobs:
           key: ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-
-          # Save even when the job fails: a failed late step must not throw away
-          # hours of compiled Bazel objects (post-action runs on success only otherwise).
-          save-always: true
 
       - name: Install Bazel pinned by versions.json
         run: |
@@ -233,3 +231,14 @@ jobs:
             ${{ env.SOURCE_DIR }}/build/artifacts/Telegram.DSYMs.zip
           if-no-files-found: error
           retention-days: 14
+
+      # actions/cache's post step is skipped on failed jobs on some runner images.
+      # Save explicitly so a failed compile still warms the next manual build.
+      - name: Save Bazel disk cache and toolchain
+        if: always() && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.BAZEL_CACHE_DIR }}
+            build-input
+          key: ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-${{ github.run_id }}
