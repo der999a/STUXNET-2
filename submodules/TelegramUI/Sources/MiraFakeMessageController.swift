@@ -11,6 +11,7 @@ import PresentationDataUtils
 
 private final class MiraFakeMessageState {
     var text: String = ""
+    var oneMessagePerLine: Bool = false
     var outgoing: Bool = false
     var sender: String = ""
     var datePreset: Int = 0
@@ -30,6 +31,7 @@ private final class MiraFakeMessageControllerArguments {
 
 private enum MiraFakeMessageEntry: ItemListNodeEntry {
     case input(String)
+    case batchMode(Bool)
     case directionHeader
     case fromThem(Bool)
     case fromMe(Bool)
@@ -42,7 +44,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
 
     var section: ItemListSectionId {
         switch self {
-        case .input:
+        case .input, .batchMode:
             return 0
         case .directionHeader, .fromThem, .fromMe, .senderHeader, .senderInput:
             return 1
@@ -57,24 +59,26 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
         switch self {
         case .input:
             return 0
-        case .directionHeader:
+        case .batchMode:
             return 1
-        case .fromThem:
+        case .directionHeader:
             return 2
-        case .fromMe:
+        case .fromThem:
             return 3
-        case .senderHeader:
+        case .fromMe:
             return 4
-        case .senderInput:
+        case .senderHeader:
             return 5
-        case .dateHeader:
+        case .senderInput:
             return 6
+        case .dateHeader:
+            return 7
         case let .preset(index, _, _):
-            return 7 + index
+            return 8 + index
         case .customDays:
-            return 12
-        case .hint:
             return 13
+        case .hint:
+            return 14
         }
     }
 
@@ -88,6 +92,11 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
         case let .input(text):
             return ItemListMultilineInputItem(presentationData: presentationData, text: text, placeholder: "Message text", maxLength: nil, sectionId: self.section, style: .blocks, textUpdated: { value in
                 arguments.state.text = value
+            })
+        case let .batchMode(value):
+            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "One message per line", value: value, sectionId: self.section, style: .blocks, updated: { value in
+                arguments.state.oneMessagePerLine = value
+                arguments.updated()
             })
         case .directionHeader:
             return ItemListSectionHeaderItem(presentationData: presentationData, text: "Direction", sectionId: self.section)
@@ -143,35 +152,48 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
         versionPromise.set(state.version)
     })
 
-    let addMessage: (PeerId?, String?) -> Void = { authorPeerId, authorName in
-        let text = state.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
+    let addMessages: (PeerId?, String?) -> Void = { authorPeerId, authorName in
+        let texts: [String]
+        if state.oneMessagePerLine {
+            texts = state.text
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        } else {
+            let text = state.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            texts = text.isEmpty ? [] : [text]
+        }
+        guard !texts.isEmpty else {
             return
         }
         let now = Int32(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970)
-        let date: Int32
+        let baseDate: Int32
         if state.datePreset < miraFakeMessageDatePresets.count, let offset = miraFakeMessageDatePresets[state.datePreset].1 {
             if offset < 0 {
                 let days = max(0, Int32(state.customDaysBack) ?? 0)
-                date = now - days * 86400
+                baseDate = now - days * 86400
             } else {
-                date = now - offset
+                baseDate = now - offset
             }
         } else {
-            date = now
+            baseDate = now
         }
-        let _ = context.engine.messages.miraAddFakeMessage(peerId: peerId, text: text, outgoing: state.outgoing, date: date, authorPeerId: authorPeerId, authorName: authorName).start()
+        for (index, text) in texts.enumerated() {
+            // Keep scripted lines in their entered order when the chat sorts by date.
+            let date = baseDate - Int32(texts.count - 1 - index)
+            let _ = context.engine.messages.miraAddFakeMessage(peerId: peerId, text: text, outgoing: state.outgoing, date: date, authorPeerId: authorPeerId, authorName: authorName).start()
+        }
         dismissImpl?()
     }
 
     let resolveSenderAndAdd: () -> Void = {
         guard !state.outgoing else {
-            addMessage(nil, nil)
+            addMessages(nil, nil)
             return
         }
         let sender = state.sender.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sender.isEmpty else {
-            addMessage(nil, nil)
+            addMessages(nil, nil)
             return
         }
         if let value = Int64(sender) {
@@ -183,7 +205,7 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
                 let userPeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(value))
                 return transaction.getPeer(userPeerId).flatMap(EnginePeer.init)
             } |> deliverOnMainQueue).start(next: { peer in
-                addMessage(peer?.id, peer?.compactDisplayTitle ?? sender)
+                addMessages(peer?.id, peer?.compactDisplayTitle ?? sender)
             })
         } else {
             var name = sender
@@ -203,7 +225,7 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
                 }
             }
             |> deliverOnMainQueue).start(next: { peer in
-                addMessage(peer?.id, peer?.compactDisplayTitle ?? sender)
+                addMessages(peer?.id, peer?.compactDisplayTitle ?? sender)
             })
         }
     }
@@ -216,6 +238,7 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
 
         var entries: [MiraFakeMessageEntry] = []
         entries.append(.input(state.text))
+        entries.append(.batchMode(state.oneMessagePerLine))
         entries.append(.directionHeader)
         entries.append(.fromThem(!state.outgoing))
         entries.append(.fromMe(state.outgoing))
@@ -230,7 +253,14 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
         if state.datePreset == miraFakeMessageDatePresets.count - 1 {
             entries.append(.customDays(state.customDaysBack))
         }
-        entries.append(.hint("The message is stored locally and never sent to the server. It appears at the end of the chat."))
+        let pendingCount: Int
+        if state.oneMessagePerLine {
+            pendingCount = state.text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.count
+        } else {
+            pendingCount = state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : 1
+        }
+        let countHint = pendingCount > 0 ? " Ready to add \(pendingCount) local message\(pendingCount == 1 ? "" : "s")." : ""
+        entries.append(.hint("Messages stay on this device and are never sent to the server. \(state.oneMessagePerLine ? "Each non-empty line becomes a separate message." : "")\(countHint)"))
 
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
 
