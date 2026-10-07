@@ -17,20 +17,20 @@ name: build-stuxnet
 # For a distributable build, create your own configuration json + provisioning data
 # per README.md "Advanced Compilation Guide" and set BUILD_CONFIGURATION_PATH below.
 #
-# SUBMODULES CAVEAT: .gitmodules contains two RELATIVE urls — ../rlottie.git and
-# ../tgcalls.git — which resolve against the repo's remote URL. On GitHub they would
-# point at https://github.com/<owner>/rlottie.git and .../tgcalls.git, which do not
-# exist, so `submodules: recursive` would fail IF those paths were committed as real
-# gitlinks. In this tree they are vendored as plain content (no gitlinks), so the
-# recursive checkout is currently a no-op. If they are ever converted to real
-# submodules, pin their urls to absolute upstream ones first, e.g.:
-#   git config submodule.submodules/rlottie/rlottie.url https://github.com/TelegramMessenger/rlottie.git
-#   git config submodule.submodules/TgVoipWebrtc/tgcalls.url https://github.com/TelegramMessenger/tgcalls.git
+# SUBMODULES: nested submodules are committed as real gitlinks pinned to the exact
+# upstream SHAs (matching this tree's snapshot); .gitmodules uses ABSOLUTE urls
+# (TelegramMessenger/rlottie, TelegramMessenger/tgcalls instead of ../ relative ones),
+# so `submodules: recursive` checkout works on GitHub.
 
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
+
+# A newer push cancels the superseded in-progress run (saves runner hours).
+concurrency:
+  group: build-stuxnet-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # Single point of change if you fork with your own api_id / bundle_id / team_id
@@ -87,6 +87,9 @@ jobs:
           key: ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-
+          # Save even when the job fails: a failed late step must not throw away
+          # hours of compiled Bazel objects (post-action runs on success only otherwise).
+          save-always: true
 
       - name: Install Bazel pinned by versions.json
         run: |
