@@ -7,6 +7,7 @@ import TelegramCore
 import TelegramPresentationData
 import AccountContext
 import ItemListUI
+import ItemListDatePickerItem
 import PresentationDataUtils
 
 private final class MiraFakeMessageState {
@@ -16,6 +17,9 @@ private final class MiraFakeMessageState {
     var sender: String = ""
     var datePreset: Int = 0
     var customDaysBack: String = ""
+    var exactDate: Int32 = Int32(Date().timeIntervalSince1970)
+    var exactDateSelection: Bool = false
+    var exactSeconds: String = String(format: "%02d", Calendar.current.component(.second, from: Date()))
     var version: Int = 0
 }
 
@@ -39,6 +43,8 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
     case senderInput(String)
     case dateHeader
     case preset(Int, String, Bool)
+    case exactDatePicker(Int32, Bool)
+    case exactSeconds(String)
     case customDays(String)
     case hint(String)
 
@@ -48,7 +54,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
             return 0
         case .directionHeader, .fromThem, .fromMe, .senderHeader, .senderInput:
             return 1
-        case .dateHeader, .preset, .customDays:
+        case .dateHeader, .preset, .exactDatePicker, .exactSeconds, .customDays:
             return 2
         case .hint:
             return 3
@@ -75,10 +81,14 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
             return 7
         case let .preset(index, _, _):
             return 8 + index
+        case .exactDatePicker:
+            return 8 + miraFakeMessageDatePresets.count
+        case .exactSeconds:
+            return 9 + miraFakeMessageDatePresets.count
         case .customDays:
-            return 13
+            return 10 + miraFakeMessageDatePresets.count
         case .hint:
-            return 14
+            return 11 + miraFakeMessageDatePresets.count
         }
     }
 
@@ -125,6 +135,38 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
                 arguments.state.datePreset = index
                 arguments.updated()
             })
+        case let .exactDatePicker(timestamp, selectingDate):
+            return ItemListDatePickerItem(presentationData: presentationData, systemStyle: .glass, dateTimeFormat: presentationData.dateTimeFormat, date: Date(timeIntervalSince1970: TimeInterval(timestamp)), title: "Exact date & time", displayingDateSelection: selectingDate, displayingTimeSelection: !selectingDate, sectionId: self.section, style: .blocks, toggleDateSelection: {
+                arguments.state.exactDateSelection = true
+                arguments.updated()
+            }, toggleTimeSelection: {
+                arguments.state.exactDateSelection = false
+                arguments.updated()
+            }, updated: { date in
+                let calendar = Calendar.current
+                let previousSeconds = calendar.component(.second, from: Date(timeIntervalSince1970: TimeInterval(arguments.state.exactDate)))
+                var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+                components.second = previousSeconds
+                if let updatedDate = calendar.date(from: components) {
+                    arguments.state.exactDate = Int32(updatedDate.timeIntervalSince1970)
+                    arguments.state.exactSeconds = String(format: "%02d", previousSeconds)
+                    arguments.updated()
+                }
+            })
+        case let .exactSeconds(text):
+            return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: text, placeholder: "Seconds (0-59)", type: .number, sectionId: self.section, textUpdated: { value in
+                let filtered = String(value.filter { $0.isNumber }.prefix(2))
+                arguments.state.exactSeconds = filtered
+                if let seconds = Int(filtered), seconds <= 59 {
+                    let calendar = Calendar.current
+                    var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date(timeIntervalSince1970: TimeInterval(arguments.state.exactDate)))
+                    components.second = seconds
+                    if let updatedDate = calendar.date(from: components) {
+                        arguments.state.exactDate = Int32(updatedDate.timeIntervalSince1970)
+                    }
+                }
+                arguments.updated()
+            }, action: {})
         case let .customDays(text):
             return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: text, placeholder: "Days back", type: .number, sectionId: self.section, textUpdated: { value in
                 arguments.state.customDaysBack = value
@@ -142,6 +184,7 @@ private let miraFakeMessageDatePresets: [(String, Int32?)] = [
     ("1 hour ago", 3600),
     ("Yesterday", 86400),
     ("7 days ago", 7 * 86400),
+    ("Exact date & time", -2),
     ("Custom (days back)", -1)
 ]
 
@@ -171,7 +214,9 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
         }
         let now = Int32(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970)
         let baseDate: Int32
-        if state.datePreset < miraFakeMessageDatePresets.count, let offset = miraFakeMessageDatePresets[state.datePreset].1 {
+        if state.datePreset == miraFakeMessageDatePresets.count - 2 {
+            baseDate = state.exactDate
+        } else if state.datePreset < miraFakeMessageDatePresets.count, let offset = miraFakeMessageDatePresets[state.datePreset].1 {
             if offset < 0 {
                 let days = max(0, Int32(state.customDaysBack) ?? 0)
                 baseDate = now - days * 86400
@@ -252,6 +297,10 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
         entries.append(.dateHeader)
         for (index, preset) in miraFakeMessageDatePresets.enumerated() {
             entries.append(.preset(index, preset.0, state.datePreset == index))
+        }
+        if state.datePreset == miraFakeMessageDatePresets.count - 2 {
+            entries.append(.exactDatePicker(state.exactDate, state.exactDateSelection))
+            entries.append(.exactSeconds(state.exactSeconds))
         }
         if state.datePreset == miraFakeMessageDatePresets.count - 1 {
             entries.append(.customDays(state.customDaysBack))
@@ -350,7 +399,7 @@ private final class MiraFakeMessagesListArguments {
 private func miraFakeMessageListDate(_ timestamp: Int32) -> String {
     let formatter = DateFormatter()
     formatter.dateStyle = .medium
-    formatter.timeStyle = .short
+    formatter.timeStyle = .medium
     return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
 }
 

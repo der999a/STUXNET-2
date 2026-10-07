@@ -233,6 +233,7 @@ swift_library(
         "//third-party/ZipArchive:ZipArchive",
         "//submodules/ChatImportUI:ChatImportUI",
         "//submodules/DatePickerNode:DatePickerNode",
+        "//submodules/TelegramUI/Components/ItemListDatePickerItem",
         "//submodules/ConfettiEffect:ConfettiEffect",
         "//submodules/Speak:Speak",
         "//submodules/PeerInfoAvatarListNode:PeerInfoAvatarListNode",
