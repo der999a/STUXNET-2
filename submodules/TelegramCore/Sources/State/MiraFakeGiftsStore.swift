@@ -246,6 +246,25 @@ public final class MiraFakeGiftsStore {
             self.changesPromise.set(self.cache)
         }
     }
+
+    /// Clears fake gifts and their local-only chat projections together. The
+    /// plain `clear()` method remains for callers that only need to reset data.
+    public func clear(account: Account) {
+        let entries = self.list()
+        let messageIds = entries.compactMap { entry -> MessageId? in
+            guard let peerId = entry.chatMessagePeerId, let id = entry.chatMessageId else {
+                return nil
+            }
+            return MessageId(peerId: EnginePeer.Id(peerId), namespace: Namespaces.Message.Local, id: id)
+        }
+        let _ = account.postbox.transaction { transaction in
+            if !messageIds.isEmpty {
+                transaction.deleteMessages(messageIds, forEachMedia: nil)
+            }
+        }.start(completed: { [weak self] in
+            self?.clear()
+        })
+    }
 }
 
 extension MiraFakeGiftsStore {

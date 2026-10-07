@@ -477,11 +477,9 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
             }
         }
         let _ = (sync |> deliverOnMainQueue).start(next: { updatedGift in
-            if existingGift != nil {
-                store.update(updatedGift)
-            } else {
-                store.add(updatedGift)
-            }
+            // Upsert keeps a fast edit/insert sequence idempotent even when the
+            // previous chat-message deletion finishes after the settings write.
+            store.upsert(updatedGift)
             dismissImpl?()
         })
     }
