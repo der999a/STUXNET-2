@@ -33,11 +33,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Build configuration. Default = sideload-friendly (own bundle id com.stuxnet.ios,
-  # no Siri/iCloud entitlements — re-signable via Sideloadly/AltStore with a free
-  # Apple account; the app also falls back to its sandbox if App Groups are stripped).
-  # Override via repository variable STUXNET_BUILD_CONFIG (Settings → Secrets and
-  # variables → Actions → Variables), e.g. build-system/appstore-configuration.json.
+  # Build configuration. Default = sideload-friendly: stock bundle id (required —
+  # the fake-codesigning provisioning profiles are keyed to ph.telegra.Telegraph),
+  # but Siri/iCloud entitlements disabled so re-signing via Sideloadly/AltStore with
+  # a free Apple account works; the app also falls back to its sandbox when App
+  # Groups are stripped by re-signing. Override via repository variable
+  # STUXNET_BUILD_CONFIG (Settings → Secrets and variables → Actions → Variables),
+  # e.g. build-system/appstore-configuration.json.
   # The stock appstore config ships Telegram's own api_id=8; that is what the repo's
   # own CI used for unsigned builds.
   BUILD_CONFIGURATION_PATH: ${{ vars.STUXNET_BUILD_CONFIG || 'build-system/sideload-configuration.json' }}
