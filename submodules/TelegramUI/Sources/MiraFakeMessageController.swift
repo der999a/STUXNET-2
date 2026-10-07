@@ -177,3 +177,133 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
     }
     return controller
 }
+
+private enum MiraFakeMessagesListEntry: ItemListNodeEntry {
+    case add(String)
+    case count(String)
+    case message(Int, FakeMessageRecord, String, String)
+    case removeAll(String)
+    case empty(String)
+
+    var section: ItemListSectionId {
+        switch self {
+        case .add, .count:
+            return 0
+        case .message, .removeAll, .empty:
+            return 1
+        }
+    }
+
+    var stableId: Int {
+        switch self {
+        case .add:
+            return 0
+        case .count:
+            return 1
+        case let .message(index, _, _, _):
+            return 10 + index * 2
+        case .removeAll:
+            return 100000
+        case .empty:
+            return 100001
+        }
+    }
+
+    static func < (lhs: MiraFakeMessagesListEntry, rhs: MiraFakeMessagesListEntry) -> Bool {
+        return lhs.stableId < rhs.stableId
+    }
+
+    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+        let arguments = arguments as! MiraFakeMessagesListArguments
+        switch self {
+        case let .add(title):
+            return ItemListDisclosureItem(presentationData: presentationData, title: title, label: "", sectionId: self.section, style: .blocks, action: {
+                arguments.add()
+            })
+        case let .count(text):
+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+        case let .message(_, record, title, detail):
+            return ItemListDisclosureItem(presentationData: presentationData, title: title, label: detail, labelStyle: .detailText, sectionId: self.section, style: .blocks, action: {
+                arguments.remove(record.id)
+            })
+        case let .removeAll(title):
+            return ItemListActionItem(presentationData: presentationData, title: title, kind: .destructive, alignment: .natural, sectionId: self.section, style: .blocks, action: {
+                arguments.removeAll()
+            })
+        case let .empty(text):
+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+        }
+    }
+}
+
+private final class MiraFakeMessagesListArguments {
+    let add: () -> Void
+    let removeAll: () -> Void
+    let remove: (String) -> Void
+
+    init(add: @escaping () -> Void, removeAll: @escaping () -> Void, remove: @escaping (String) -> Void) {
+        self.add = add
+        self.removeAll = removeAll
+        self.remove = remove
+    }
+}
+
+private func miraFakeMessageListDate(_ timestamp: Int32) -> String {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+}
+
+public func miraFakeMessagesController(context: AccountContext, peerId: PeerId) -> ViewController {
+    var pushControllerImpl: ((ViewController) -> Void)?
+    let arguments = MiraFakeMessagesListArguments(add: {
+        pushControllerImpl?(miraFakeMessageController(context: context, peerId: peerId))
+    }, removeAll: {
+        let _ = context.engine.messages.miraRemoveAllFakeMessages(peerId: peerId).start()
+    }, remove: { id in
+        let _ = context.engine.messages.miraRemoveFakeMessage(id: id).start()
+    })
+
+    let signal = combineLatest(context.sharedContext.presentationData, context.account.miraMessageHistoryStore.fakeMessagesChanges)
+    |> map { presentationData, records -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        let peerRecords = records.filter { $0.messagePeerId == peerId.toInt64() }.sorted { lhs, rhs in
+            if lhs.date == rhs.date {
+                return lhs.id < rhs.id
+            }
+            return lhs.date < rhs.date
+        }
+        var entries: [MiraFakeMessagesListEntry] = []
+        entries.append(.add("Add Fake Message"))
+        entries.append(.count(peerRecords.isEmpty ? "No local messages" : "\(peerRecords.count) local message\(peerRecords.count == 1 ? "" : "s")"))
+        if peerRecords.isEmpty {
+            entries.append(.empty("Fake messages stay on this device and are never sent to Telegram."))
+        } else {
+            for (index, record) in peerRecords.enumerated() {
+                let preview = record.text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = preview.isEmpty ? "(empty message)" : String(preview.prefix(80))
+                let direction = record.outgoing ? "From you" : "From chat"
+                entries.append(.message(index, record, title, "\(direction) · \(miraFakeMessageListDate(record.date))"))
+            }
+            entries.append(.removeAll("Remove all fake messages"))
+        }
+
+        let controllerState = ItemListControllerState(
+            presentationData: ItemListPresentationData(presentationData),
+            title: .text("Fake Messages"),
+            leftNavigationButton: nil,
+            rightNavigationButton: ItemListNavigationButton(content: .icon(.add), style: .regular, enabled: true, action: {
+                arguments.add()
+            }),
+            backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)
+        )
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
+        return (controllerState, (listState, arguments))
+    }
+
+    let controller = ItemListController(context: context, state: signal)
+    pushControllerImpl = { [weak controller] nextController in
+        (controller?.navigationController as? NavigationController)?.pushViewController(nextController)
+    }
+    return controller
+}

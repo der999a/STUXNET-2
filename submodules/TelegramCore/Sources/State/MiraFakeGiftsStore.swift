@@ -145,7 +145,23 @@ public final class MiraFakeGiftsStore {
         }
         self.didLoad = true
         if let data = FileManager.default.contents(atPath: self.filePath), let gifts = try? JSONDecoder().decode([MiraFakeGift].self, from: data) {
-            self.cache = gifts
+            // Older builds could append the same entry more than once when an edit
+            // raced an asynchronous insert. Keep the newest copy by id so the
+            // profile and chat projections remain one-to-one.
+            var uniqueGifts: [MiraFakeGift] = []
+            var indexes: [String: Int] = [:]
+            for gift in gifts {
+                if let index = indexes[gift.id] {
+                    uniqueGifts[index] = gift
+                } else {
+                    indexes[gift.id] = uniqueGifts.count
+                    uniqueGifts.append(gift)
+                }
+            }
+            self.cache = uniqueGifts
+            if self.cache.count != gifts.count {
+                self.saveLocked()
+            }
         }
         self.changesPromise.set(self.cache)
     }
@@ -180,22 +196,26 @@ public final class MiraFakeGiftsStore {
     }
 
     public func add(_ gift: MiraFakeGift) {
-        self.queue.async {
-            self.loadIfNeeded()
-            self.cache.append(gift)
-            self.saveLocked()
-            self.changesPromise.set(self.cache)
-        }
+        self.upsert(gift)
     }
 
     public func update(_ gift: MiraFakeGift) {
+        self.upsert(gift)
+    }
+
+    /// Inserts a new entry or replaces the existing entry with the same stable id.
+    /// Fake gift settings are edited from an asynchronous UI flow, so treating
+    /// update as a strict "must already exist" operation can silently lose edits.
+    public func upsert(_ gift: MiraFakeGift) {
         self.queue.async {
             self.loadIfNeeded()
             if let index = self.cache.firstIndex(where: { $0.id == gift.id }) {
                 self.cache[index] = gift
-                self.saveLocked()
-                self.changesPromise.set(self.cache)
+            } else {
+                self.cache.append(gift)
             }
+            self.saveLocked()
+            self.changesPromise.set(self.cache)
         }
     }
 
@@ -441,12 +461,16 @@ extension MiraFakeGiftsStore {
         }
     }
 
-    public func deleteChatMessage(account: Account, entry: MiraFakeGift) {
+    public func deleteChatMessageSignal(account: Account, entry: MiraFakeGift) -> Signal<Void, NoError> {
         guard let chatMessageId = entry.chatMessageId, let chatMessagePeerId = entry.chatMessagePeerId else {
-            return
+            return .single(())
         }
-        let _ = account.postbox.transaction { transaction in
+        return account.postbox.transaction { transaction in
             transaction.deleteMessages([MessageId(peerId: EnginePeer.Id(chatMessagePeerId), namespace: Namespaces.Message.Local, id: chatMessageId)], forEachMedia: nil)
-        }.start()
+        }
+    }
+
+    public func deleteChatMessage(account: Account, entry: MiraFakeGift) {
+        let _ = self.deleteChatMessageSignal(account: account, entry: entry).start()
     }
 }

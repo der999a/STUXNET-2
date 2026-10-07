@@ -274,6 +274,24 @@ public extension TelegramEngine {
             }
         }
 
+        public func miraRemoveAllFakeMessages(peerId: PeerId) -> Signal<Void, NoError> {
+            let account = self.account
+            let records = account.miraMessageHistoryStore.fakeMessages(in: peerId)
+            let ids = records.map { $0.id }
+            return account.postbox.transaction { transaction -> Void in
+                let messageIds = records.compactMap { record -> MessageId? in
+                    guard record.messageId != 0 else {
+                        return nil
+                    }
+                    return MessageId(peerId: PeerId(record.messagePeerId), namespace: record.messageNamespace, id: record.messageId)
+                }
+                if !messageIds.isEmpty {
+                    transaction.deleteMessages(messageIds, forEachMedia: nil)
+                }
+                account.miraMessageHistoryStore.removeFakeMessages(ids: ids)
+            }
+        }
+
         public func clearAuthorHistory(peerId: PeerId, memberId: PeerId) -> Signal<Void, NoError> {
             return _internal_clearAuthorHistory(account: self.account, peerId: peerId, memberId: memberId)
         }

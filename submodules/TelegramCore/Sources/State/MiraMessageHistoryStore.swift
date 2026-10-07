@@ -322,4 +322,17 @@ public final class MiraMessageHistoryStore {
             self.fakeMessagesChangesPromise.set(self.fakeCache)
         }
     }
+
+    public func removeFakeMessages(ids: [String]) {
+        guard !ids.isEmpty else {
+            return
+        }
+        self.queue.async {
+            self.loadFakesIfNeeded()
+            let idSet = Set(ids)
+            self.fakeCache.removeAll(where: { idSet.contains($0.id) })
+            self.saveFakesLocked()
+            self.fakeMessagesChangesPromise.set(self.fakeCache)
+        }
+    }
 }

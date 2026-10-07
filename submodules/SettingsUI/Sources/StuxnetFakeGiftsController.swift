@@ -465,30 +465,25 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
     let store = context.account.miraFakeGiftsStore
 
     let persistAndSync: (MiraFakeGift) -> Void = { gift in
-        if let existingGift {
-            store.deleteChatMessage(account: context.account, entry: existingGift)
-        }
         var gift = gift
         gift.chatMessagePeerId = nil
         gift.chatMessageId = nil
-        if gift.showInChat {
-            let _ = (store.insertChatMessage(account: context.account, entry: gift)
-            |> deliverOnMainQueue).start(next: { updatedGift in
-                if existingGift != nil {
-                    store.update(updatedGift)
-                } else {
-                    store.add(updatedGift)
-                }
-                dismissImpl?()
-            })
-        } else {
-            if existingGift != nil {
-                store.update(gift)
+        let removeOld: Signal<Void, NoError> = existingGift.map { store.deleteChatMessageSignal(account: context.account, entry: $0) } ?? .single(())
+        let sync = removeOld |> mapToSignal { _ -> Signal<MiraFakeGift, NoError> in
+            if gift.showInChat {
+                return store.insertChatMessage(account: context.account, entry: gift)
             } else {
-                store.add(gift)
+                return .single(gift)
+            }
+        }
+        let _ = (sync |> deliverOnMainQueue).start(next: { updatedGift in
+            if existingGift != nil {
+                store.update(updatedGift)
+            } else {
+                store.add(updatedGift)
             }
             dismissImpl?()
-        }
+        })
     }
 
     let resolveFromAndSave: (MiraFakeGift) -> Void = { gift in
