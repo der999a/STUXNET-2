@@ -136,7 +136,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
                 arguments.updated()
             })
         case let .exactDatePicker(timestamp, selectingDate):
-            return ItemListDatePickerItem(presentationData: presentationData, systemStyle: .glass, dateTimeFormat: presentationData.dateTimeFormat, date: Date(timeIntervalSince1970: TimeInterval(timestamp)), title: "Exact date & time", displayingDateSelection: selectingDate, displayingTimeSelection: !selectingDate, sectionId: self.section, style: .blocks, toggleDateSelection: {
+            return ItemListDatePickerItem(presentationData: presentationData, systemStyle: .glass, dateTimeFormat: presentationData.dateTimeFormat, date: Date(timeIntervalSince1970: TimeInterval(timestamp)), minDate: 0, title: "Exact date & time", displayingDateSelection: selectingDate, displayingTimeSelection: !selectingDate, sectionId: self.section, style: .blocks, toggleDateSelection: {
                 arguments.state.exactDateSelection = true
                 arguments.updated()
             }, toggleTimeSelection: {
