@@ -220,6 +220,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
     var mainWindow: Window1!
     private var dataImportSplash: LegacyDataImportSplash?
     private var memoryUsageOverlayView: UILabel?
+    private var screenCaptureGuard: MiraScreenCaptureGuard?
     
     private var buildConfig: BuildConfig?
     let episodeId = arc4random()
@@ -1204,6 +1205,13 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             Logger.shared.redactSensitiveData = loggingSettings.redactSensitiveData
             
             return .single(sharedApplicationContext)
+        })
+        
+        self.screenCaptureGuard = MiraScreenCaptureGuard(accountManager: accountManager, presentationData: self.sharedContextPromise.get()
+        |> mapToSignal { sharedApplicationContext -> Signal<PresentationData, NoError> in
+            return sharedApplicationContext.sharedContext.presentationData
+        }, getWindow: { [weak self] in
+            return self?.nativeWindow
         })
             
         self.context.set(self.sharedContextPromise.get()

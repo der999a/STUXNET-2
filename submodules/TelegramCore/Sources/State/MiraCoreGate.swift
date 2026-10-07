@@ -21,6 +21,8 @@ public struct MiraCoreGateSnapshot: Equatable {
     public var filterZalgo: Bool = false
     public var isGhostActive: Bool = false
     public var fakeGiftsEnabled: Bool = false
+    public var voiceChangerEnabled: Bool = false
+    public var voiceChangerPreset: Int32 = 0
     
     public init() {
     }
@@ -113,6 +115,14 @@ public final class MiraCoreGate {
     
     public var fakeGiftsEnabled: Bool {
         return self.snapshot.fakeGiftsEnabled
+    }
+    
+    public var voiceChangerEnabled: Bool {
+        return self.snapshot.voiceChangerEnabled
+    }
+    
+    public var voiceChangerPreset: Int32 {
+        return self.snapshot.voiceChangerPreset
     }
     
     private init() {

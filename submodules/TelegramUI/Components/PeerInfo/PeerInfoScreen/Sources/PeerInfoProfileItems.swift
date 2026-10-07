@@ -9,6 +9,7 @@ import TextFormat
 import PhoneNumberFormat
 import SwiftSignalKit
 import TelegramStringFormatting
+import TelegramUIPreferences
 import AsyncDisplayKit
 import LocationResources
 import AttachmentUI
@@ -156,7 +157,10 @@ func infoItems(
         }
         
         if let phone = user.phone {
-            let formattedPhone = formatPhoneNumber(context: context, number: phone)
+            var formattedPhone = formatPhoneNumber(context: context, number: phone)
+            if user.id == context.account.peerId, context.sharedContext.immediateMiraSettings.hidePhoneNumber {
+                formattedPhone = miraMaskPhoneNumber(formattedPhone)
+            }
             let label: String
             if formattedPhone.hasPrefix("+888 ") {
                 label = presentationData.strings.UserInfo_AnonymousNumberLabel
@@ -903,6 +907,15 @@ func infoItems(
         }
     }
     
+    if context.sharedContext.immediateMiraSettings.showPeerId, let peer = data.peer {
+        let peerIdString = "\(peer.id.toInt64())"
+        items[.peerInfo]!.append(PeerInfoScreenLabeledValueItem(id: "miraPeerId", label: "ID", text: peerIdString, textColor: .accent, action: { _, _ in
+            UIPasteboard.general.string = peerIdString
+        }, requestLayout: { animated in
+            interaction.requestLayout(animated)
+        }))
+    }
+
     var result: [(AnyHashable, [PeerInfoScreenItem])] = []
     for section in InfoSection.allCases {
         if let sectionItems = items[section], !sectionItems.isEmpty {

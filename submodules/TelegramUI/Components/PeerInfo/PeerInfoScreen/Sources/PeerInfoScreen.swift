@@ -6206,6 +6206,26 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
     }
     
     fileprivate func joinChannel(peer: EnginePeer) {
+        if self.context.sharedContext.immediateMiraSettings.confirmJoinChannel {
+            let presentationData = self.presentationData
+            let isGroup: Bool
+            if case let .channel(channel) = peer, case .broadcast = channel.info {
+                isGroup = false
+            } else {
+                isGroup = true
+            }
+            self.controller?.present(textAlertController(context: self.context, updatedPresentationData: self.controller?.updatedPresentationData, title: nil, text: "Join \"\(peer.compactDisplayTitle)\"?", actions: [
+                TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+                TextAlertAction(type: .defaultAction, title: isGroup ? presentationData.strings.Group_JoinGroup : presentationData.strings.Channel_JoinChannel, action: { [weak self] in
+                    self?.joinChannelConfirmed(peer: peer)
+                })
+            ]), in: .window(.root))
+            return
+        }
+        self.joinChannelConfirmed(peer: peer)
+    }
+
+    private func joinChannelConfirmed(peer: EnginePeer) {
         let presentationData = self.presentationData
         self.joinChannelDisposable.set((
             self.context.peerChannelMemberCategoriesContextsManager.join(engine: self.context.engine, peerId: peer.id, hash: nil)

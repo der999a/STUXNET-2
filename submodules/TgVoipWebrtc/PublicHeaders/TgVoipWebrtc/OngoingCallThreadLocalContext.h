@@ -57,6 +57,8 @@
 
 + (void)setupAudioSession;
 
++ (void)setVoiceChangerPreset:(int32_t)preset;
+
 - (void)setManualAudioSessionIsActive:(bool)isAudioSessionActive;
 
 - (void)setTone:(CallAudioTone * _Nullable)tone;

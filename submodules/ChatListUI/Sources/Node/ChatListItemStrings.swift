@@ -77,7 +77,7 @@ private func paidContentGroupType(paidContent: TelegramMediaPaidContent) -> Mess
     return currentType
 }
 
-public func chatListItemStrings(strings: PresentationStrings, nameDisplayOrder: PresentationPersonNameOrder, dateTimeFormat: PresentationDateTimeFormat, contentSettings: ContentSettings, messages: [EngineMessage], chatPeer: EngineRenderedPeer, accountPeerId: EnginePeer.Id, enableMediaEmoji: Bool = true, isPeerGroup: Bool = false) -> (peer: EnginePeer?, hideAuthor: Bool, messageText: String, messageEntities: [MessageTextEntity], spoilers: [NSRange]?, customEmojiRanges: [(NSRange, ChatTextInputTextCustomEmojiAttribute)]?, richTextPreview: NSAttributedString?) {
+public func chatListItemStrings(strings: PresentationStrings, nameDisplayOrder: PresentationPersonNameOrder, dateTimeFormat: PresentationDateTimeFormat, contentSettings: ContentSettings, messages: [EngineMessage], chatPeer: EngineRenderedPeer, accountPeerId: EnginePeer.Id, enableMediaEmoji: Bool = true, isPeerGroup: Bool = false, miraSettings: MiraSettings? = nil) -> (peer: EnginePeer?, hideAuthor: Bool, messageText: String, messageEntities: [MessageTextEntity], spoilers: [NSRange]?, customEmojiRanges: [(NSRange, ChatTextInputTextCustomEmojiAttribute)]?, richTextPreview: NSAttributedString?) {
     let peer: EnginePeer?
     
     let message = messages.last
@@ -484,6 +484,14 @@ public func chatListItemStrings(strings: PresentationStrings, nameDisplayOrder: 
         }
     }
     
+    if let miraSettings = miraSettings, miraSettings.showDeletedMarkInChatList, let lastMessage = messages.last, lastMessage._asMessage().isMiraLocallyDeleted {
+        if messageText.isEmpty {
+            messageText = miraSettings.deletedMark
+        } else {
+            messageText = "\(messageText) \(miraSettings.deletedMark)"
+        }
+    }
+
     if richTextPreview?.string != messageText {
         richTextPreview = nil
     }

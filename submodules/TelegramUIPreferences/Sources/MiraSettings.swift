@@ -160,6 +160,16 @@ public struct MiraSettings: Codable, Equatable {
     public var autoClearClipboard: Bool
     public var hidePhoneNumber: Bool
     public var showDeletedMarkInChatList: Bool
+    public var showMessageSeconds: Bool
+    public var compactChatList: Bool
+    public var compactChatFolders: Bool
+    public var fakeMessagesEnabled: Bool
+    public var confirmJoinChannel: Bool
+    public var confirmViewStory: Bool
+    public var confirmCall: Bool
+    public var confirmSendSticker: Bool
+    public var confirmSendGif: Bool
+    public var confirmSendVoice: Bool
     
     public static var defaultSettings: MiraSettings {
         return MiraSettings()
@@ -195,7 +205,17 @@ public struct MiraSettings: Codable, Equatable {
         localMessageEditEnabled: Bool = true,
         autoClearClipboard: Bool = false,
         hidePhoneNumber: Bool = false,
-        showDeletedMarkInChatList: Bool = true
+        showDeletedMarkInChatList: Bool = true,
+        showMessageSeconds: Bool = false,
+        compactChatList: Bool = false,
+        compactChatFolders: Bool = false,
+        fakeMessagesEnabled: Bool = true,
+        confirmJoinChannel: Bool = false,
+        confirmViewStory: Bool = false,
+        confirmCall: Bool = false,
+        confirmSendSticker: Bool = false,
+        confirmSendGif: Bool = false,
+        confirmSendVoice: Bool = false
     ) {
         self.ghost = ghost
         self.useGlobalGhostMode = useGlobalGhostMode
@@ -227,6 +247,16 @@ public struct MiraSettings: Codable, Equatable {
         self.autoClearClipboard = autoClearClipboard
         self.hidePhoneNumber = hidePhoneNumber
         self.showDeletedMarkInChatList = showDeletedMarkInChatList
+        self.showMessageSeconds = showMessageSeconds
+        self.compactChatList = compactChatList
+        self.compactChatFolders = compactChatFolders
+        self.fakeMessagesEnabled = fakeMessagesEnabled
+        self.confirmJoinChannel = confirmJoinChannel
+        self.confirmViewStory = confirmViewStory
+        self.confirmCall = confirmCall
+        self.confirmSendSticker = confirmSendSticker
+        self.confirmSendGif = confirmSendGif
+        self.confirmSendVoice = confirmSendVoice
     }
     
     public func ghostSettings(forPeerId peerId: EnginePeer.Id?) -> MiraGhostSettings {
@@ -273,6 +303,16 @@ public struct MiraSettings: Codable, Equatable {
         self.autoClearClipboard = try container.decodeIfPresent(Bool.self, forKey: "autoClearClipboard") ?? false
         self.hidePhoneNumber = try container.decodeIfPresent(Bool.self, forKey: "hidePhoneNumber") ?? false
         self.showDeletedMarkInChatList = try container.decodeIfPresent(Bool.self, forKey: "showDeletedMarkInChatList") ?? true
+        self.showMessageSeconds = try container.decodeIfPresent(Bool.self, forKey: "showMessageSeconds") ?? false
+        self.compactChatList = try container.decodeIfPresent(Bool.self, forKey: "compactChatList") ?? false
+        self.compactChatFolders = try container.decodeIfPresent(Bool.self, forKey: "compactChatFolders") ?? false
+        self.fakeMessagesEnabled = try container.decodeIfPresent(Bool.self, forKey: "fakeMessagesEnabled") ?? true
+        self.confirmJoinChannel = try container.decodeIfPresent(Bool.self, forKey: "confirmJoinChannel") ?? false
+        self.confirmViewStory = try container.decodeIfPresent(Bool.self, forKey: "confirmViewStory") ?? false
+        self.confirmCall = try container.decodeIfPresent(Bool.self, forKey: "confirmCall") ?? false
+        self.confirmSendSticker = try container.decodeIfPresent(Bool.self, forKey: "confirmSendSticker") ?? false
+        self.confirmSendGif = try container.decodeIfPresent(Bool.self, forKey: "confirmSendGif") ?? false
+        self.confirmSendVoice = try container.decodeIfPresent(Bool.self, forKey: "confirmSendVoice") ?? false
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -308,6 +348,16 @@ public struct MiraSettings: Codable, Equatable {
         try container.encode(self.autoClearClipboard, forKey: "autoClearClipboard")
         try container.encode(self.hidePhoneNumber, forKey: "hidePhoneNumber")
         try container.encode(self.showDeletedMarkInChatList, forKey: "showDeletedMarkInChatList")
+        try container.encode(self.showMessageSeconds, forKey: "showMessageSeconds")
+        try container.encode(self.compactChatList, forKey: "compactChatList")
+        try container.encode(self.compactChatFolders, forKey: "compactChatFolders")
+        try container.encode(self.fakeMessagesEnabled, forKey: "fakeMessagesEnabled")
+        try container.encode(self.confirmJoinChannel, forKey: "confirmJoinChannel")
+        try container.encode(self.confirmViewStory, forKey: "confirmViewStory")
+        try container.encode(self.confirmCall, forKey: "confirmCall")
+        try container.encode(self.confirmSendSticker, forKey: "confirmSendSticker")
+        try container.encode(self.confirmSendGif, forKey: "confirmSendGif")
+        try container.encode(self.confirmSendVoice, forKey: "confirmSendVoice")
     }
 }
 

@@ -5,6 +5,7 @@ import Display
 import SwiftSignalKit
 import TelegramCore
 import TelegramPresentationData
+import TelegramUIPreferences
 import ItemListUI
 import PresentationDataUtils
 import AvatarNode
@@ -2598,7 +2599,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
             var hideAuthor = false
             switch contentPeer {
                 case let .chat(itemPeer):
-                    var (peer, initialHideAuthor, messageText, messageEntities, spoilers, customEmojiRanges, richTextPreview) = chatListItemStrings(strings: item.presentationData.strings, nameDisplayOrder: item.presentationData.nameDisplayOrder, dateTimeFormat: item.presentationData.dateTimeFormat, contentSettings: item.context.currentContentSettings.with { $0 }, messages: messages, chatPeer: itemPeer, accountPeerId: item.context.account.peerId, enableMediaEmoji: !enableChatListPhotos, isPeerGroup: isPeerGroup)
+                    var (peer, initialHideAuthor, messageText, messageEntities, spoilers, customEmojiRanges, richTextPreview) = chatListItemStrings(strings: item.presentationData.strings, nameDisplayOrder: item.presentationData.nameDisplayOrder, dateTimeFormat: item.presentationData.dateTimeFormat, contentSettings: item.context.currentContentSettings.with { $0 }, messages: messages, chatPeer: itemPeer, accountPeerId: item.context.account.peerId, enableMediaEmoji: !enableChatListPhotos, isPeerGroup: isPeerGroup, miraSettings: item.context.sharedContext.immediateMiraSettings)
                     
                     if case let .psa(_, maybePsaText) = promoInfo, let psaText = maybePsaText {
                         initialHideAuthor = true
@@ -4033,7 +4034,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
             
             let titleSpacing: CGFloat = -1.0
             let authorSpacing: CGFloat = -3.0
-            var itemHeight: CGFloat = 8.0 * 2.0 + 1.0
+            let verticalPadding: CGFloat = item.context.sharedContext.immediateMiraSettings.compactChatList ? 2.0 : 8.0
+            var itemHeight: CGFloat = verticalPadding * 2.0 + 1.0
             itemHeight -= 21.0
             if case let .peer(peerData) = item.content, let customMessageListData = peerData.customMessageListData, customMessageListData.commandPrefix != nil {
                 itemHeight += measureLayout.size.height * 2.0
@@ -4045,7 +4047,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 itemHeight += authorSpacing
             }
                         
-            let rawContentRect = CGRect(origin: CGPoint(x: 2.0, y: layoutOffset + floor(item.presentationData.fontSize.itemListBaseFontSize * 8.0 / 17.0)), size: CGSize(width: rawContentWidth, height: itemHeight - 12.0 - 9.0))
+            let rawContentRect = CGRect(origin: CGPoint(x: 2.0, y: layoutOffset + floor(item.presentationData.fontSize.itemListBaseFontSize * verticalPadding / 17.0)), size: CGSize(width: rawContentWidth, height: itemHeight - 12.0 - 9.0))
             
             let insets = ChatListItemNode.insets(first: first, last: last, firstWithHeader: firstWithHeader)
             var heightOffset: CGFloat = 0.0

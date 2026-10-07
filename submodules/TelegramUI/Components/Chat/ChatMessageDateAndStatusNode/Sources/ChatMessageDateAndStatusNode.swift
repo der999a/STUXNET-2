@@ -12,6 +12,7 @@ import ReactionImageComponent
 import AnimationCache
 import MultiAnimationRenderer
 import TelegramStringFormatting
+import TelegramUIPreferences
 
 private func maybeAddRotationAnimation(_ layer: CALayer, duration: Double) {
     if let _ = layer.animation(forKey: "clockFrameAnimation") {
@@ -541,7 +542,9 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
             if arguments.edited {
                 if let useEditedTimestamp = arguments.context.getAppConfigValue("message_primary_edited_date") as? Bool, useEditedTimestamp {
                 } else {
-                    updatedDateText = "\(arguments.presentationData.strings.Conversation_MessageEditedLabel) \(updatedDateText)"
+                    let editedMark = arguments.context.sharedContext.immediateMiraSettings.editedMark
+                    let editedLabel = editedMark == MiraSettings.defaultSettings.editedMark ? arguments.presentationData.strings.Conversation_MessageEditedLabel : editedMark
+                    updatedDateText = "\(editedLabel) \(updatedDateText)"
                 }
             }
             if let impressionCount = arguments.impressionCount {

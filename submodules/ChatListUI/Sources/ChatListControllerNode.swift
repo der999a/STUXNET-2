@@ -1653,6 +1653,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
             navigationHeaderPanels = AnyComponent(HeaderPanelContainerComponent(
                 theme: self.presentationData.theme,
                 tabs: tabs,
+                compactTabs: self.context.sharedContext.immediateMiraSettings.compactChatFolders,
                 panels: panels
             ))
         }

@@ -3,6 +3,23 @@ import AVFoundation
 import OpusBinding
 import AudioWaveform
 
+// Voice changer presets.
+//
+// Recorded voice messages: every non-off preset runs its full offline
+// AVAudioEngine chain below (pitch, rate, EQ, distortion, delay, reverb).
+//
+// Calls (1:1 and group): the same preset id selects a realtime,
+// sample-count-preserving timbre effect applied in-place to captured mic
+// PCM inside TgVoipWebrtc (miraCallVoiceFXProcessBuffer in
+// OngoingCallThreadLocalContext.mm, fed by [SharedCallAudioDevice
+// setVoiceChangerPreset:]). Pitch shifting is not sample-safe on the
+// realtime 10 ms audio callback, so call effects are timbre-disguise only:
+// 3 Robot -> ring mod 55 Hz + 6-bit crush; 7 Radio -> 300-3400 Hz bandpass;
+// 9 Anonymous / 10 Anonymous Pro -> bandpass + tanh drive + 30 Hz ring mod;
+// 11 Demon -> 30 Hz ring mod + hard drive; 12 Cyber -> 7-bit crush + 2x
+// sample-hold decimation + 45 Hz ring mod; any other non-zero preset ->
+// mild bandpass + gentle drive. Call processing is gated by
+// voiceChangerEnabled && voiceChangerPreset != 0 via MiraCoreGate.
 public enum MiraVoiceChangerPreset: Int32, CaseIterable {
     case off = 0
     case chipmunk = 1

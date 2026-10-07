@@ -3199,6 +3199,16 @@ extension ChatControllerImpl {
             }
         }, sendSticker: { [weak self] file, clearInput, sourceView, sourceRect, sourceLayer, bubbleUpEmojiOrStickersets in
             if let strongSelf = self, canSendMessagesToChat(strongSelf.presentationInterfaceState) {
+                if strongSelf.context.sharedContext.immediateMiraSettings.confirmSendSticker {
+                    let presentationData = strongSelf.presentationData
+                    strongSelf.present(textAlertController(context: strongSelf.context, updatedPresentationData: strongSelf.updatedPresentationData, title: nil, text: "Send this sticker?", actions: [
+                        TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+                        TextAlertAction(type: .defaultAction, title: "Send", action: { [weak self] in
+                            let _ = self?.controllerInteraction?.sendSticker(file, false, false, nil, clearInput, sourceView, sourceRect, sourceLayer, bubbleUpEmojiOrStickersets)
+                        })
+                    ]), in: .window(.root))
+                    return true
+                }
                 return strongSelf.controllerInteraction?.sendSticker(file, false, false, nil, clearInput, sourceView, sourceRect, sourceLayer, bubbleUpEmojiOrStickersets) ?? false
             } else {
                 return false

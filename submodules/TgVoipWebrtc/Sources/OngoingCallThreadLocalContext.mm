@@ -46,6 +46,238 @@
 
 #import <TdBinding/TdBinding.h>
 
+#include <atomic>
+#include <cmath>
+
+// Mira call voice FX: realtime, sample-count-preserving, in-place timbre
+// processing of captured mic PCM inside RecordedDataIsAvailable, before the
+// buffer is forwarded to the WebRTC audio transports (APM/encoder).
+// Pitch shifting is deliberately NOT done here: it is not sample-safe on a
+// realtime 10 ms callback. All effects preserve frame size and timing.
+// The preset is selected via [SharedCallAudioDevice setVoiceChangerPreset:].
+namespace {
+
+constexpr float kMiraCallVoiceFXPi = 3.14159265358979323846f;
+
+struct MiraCallVoiceFXConfig {
+    bool bandpass = false;
+    float drive = 0.0f;
+    float ringFreq = 0.0f;
+    int32_t bitDepth = 0;
+    bool decimate2x = false;
+};
+
+MiraCallVoiceFXConfig miraCallVoiceFXConfigForPreset(int32_t preset) {
+    MiraCallVoiceFXConfig config;
+    switch (preset) {
+        case 3:
+            // Robot: metallic ring modulation + bitcrush.
+            config.ringFreq = 55.0f;
+            config.bitDepth = 6;
+            break;
+        case 7:
+            // Radio: 300-3400 Hz band-limit.
+            config.bandpass = true;
+            break;
+        case 9:
+            // Anonymous: band-limit + soft saturation + slow ring modulation.
+            config.bandpass = true;
+            config.drive = 2.0f;
+            config.ringFreq = 30.0f;
+            break;
+        case 10:
+            // Anonymous Pro: same composite with harder saturation.
+            config.bandpass = true;
+            config.drive = 3.0f;
+            config.ringFreq = 30.0f;
+            break;
+        case 11:
+            // Demon: slow ring modulation + hard saturation.
+            config.ringFreq = 30.0f;
+            config.drive = 4.0f;
+            break;
+        case 12:
+            // Cyber: bitcrush with 2x sample-hold decimation + ring modulation.
+            config.bitDepth = 7;
+            config.decimate2x = true;
+            config.ringFreq = 45.0f;
+            break;
+        default:
+            // Any other non-zero preset: mild band-limit + gentle saturation.
+            config.bandpass = true;
+            config.drive = 1.5f;
+            break;
+    }
+    return config;
+}
+
+struct MiraCallVoiceFXBiquad {
+    float b0 = 0.0f;
+    float b1 = 0.0f;
+    float b2 = 0.0f;
+    float a1 = 0.0f;
+    float a2 = 0.0f;
+    float x1 = 0.0f;
+    float x2 = 0.0f;
+    float y1 = 0.0f;
+    float y2 = 0.0f;
+
+    void configureHighPass(float sampleRate, float frequency, float q) {
+        float w0 = 2.0f * kMiraCallVoiceFXPi * frequency / sampleRate;
+        float cosW0 = cosf(w0);
+        float alpha = sinf(w0) / (2.0f * q);
+        float a0 = 1.0f + alpha;
+        b0 = ((1.0f + cosW0) * 0.5f) / a0;
+        b1 = (-(1.0f + cosW0)) / a0;
+        b2 = ((1.0f + cosW0) * 0.5f) / a0;
+        a1 = (-2.0f * cosW0) / a0;
+        a2 = (1.0f - alpha) / a0;
+    }
+
+    void configureLowPass(float sampleRate, float frequency, float q) {
+        float w0 = 2.0f * kMiraCallVoiceFXPi * frequency / sampleRate;
+        float cosW0 = cosf(w0);
+        float alpha = sinf(w0) / (2.0f * q);
+        float a0 = 1.0f + alpha;
+        b0 = ((1.0f - cosW0) * 0.5f) / a0;
+        b1 = (1.0f - cosW0) / a0;
+        b2 = ((1.0f - cosW0) * 0.5f) / a0;
+        a1 = (-2.0f * cosW0) / a0;
+        a2 = (1.0f - alpha) / a0;
+    }
+
+    float process(float x) {
+        float y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1;
+        x1 = x;
+        y2 = y1;
+        y1 = y;
+        return y;
+    }
+
+    void reset() {
+        x1 = x2 = y1 = y2 = 0.0f;
+    }
+};
+
+struct MiraCallVoiceFXState {
+    MiraCallVoiceFXConfig config;
+    MiraCallVoiceFXBiquad highPass;
+    MiraCallVoiceFXBiquad lowPass;
+    float ringPhase = 0.0f;
+    float ringPhaseStep = 0.0f;
+    float driveNorm = 1.0f;
+    float heldSample = 0.0f;
+    int32_t holdCounter = 0;
+    uint32_t appliedGeneration = 0;
+    uint32_t sampleRate = 0;
+};
+
+std::atomic<int32_t> g_miraCallVoiceFXPreset{0};
+std::atomic<uint32_t> g_miraCallVoiceFXGeneration{0};
+MiraCallVoiceFXState g_miraCallVoiceFXState;
+
+// Runs on the audio thread only; reconfigures coefficients when the sample
+// rate changes and resets filter history when the generation counter moved
+// (preset change or audio device module restart).
+void miraCallVoiceFXConfigure(uint32_t sampleRate, bool resetState) {
+    int32_t preset = g_miraCallVoiceFXPreset.load(std::memory_order_acquire);
+    g_miraCallVoiceFXState.config = miraCallVoiceFXConfigForPreset(preset);
+    float fs = (float)sampleRate;
+    g_miraCallVoiceFXState.highPass.configureHighPass(fs, 300.0f, 0.7071f);
+    g_miraCallVoiceFXState.lowPass.configureLowPass(fs, 3400.0f, 0.7071f);
+    if (g_miraCallVoiceFXState.config.ringFreq > 0.0f) {
+        g_miraCallVoiceFXState.ringPhaseStep = 2.0f * kMiraCallVoiceFXPi * g_miraCallVoiceFXState.config.ringFreq / fs;
+    } else {
+        g_miraCallVoiceFXState.ringPhaseStep = 0.0f;
+    }
+    if (g_miraCallVoiceFXState.config.drive > 0.0f) {
+        g_miraCallVoiceFXState.driveNorm = 1.0f / tanhf(g_miraCallVoiceFXState.config.drive);
+    } else {
+        g_miraCallVoiceFXState.driveNorm = 1.0f;
+    }
+    if (resetState) {
+        g_miraCallVoiceFXState.highPass.reset();
+        g_miraCallVoiceFXState.lowPass.reset();
+        g_miraCallVoiceFXState.ringPhase = 0.0f;
+        g_miraCallVoiceFXState.heldSample = 0.0f;
+        g_miraCallVoiceFXState.holdCounter = 0;
+    }
+    g_miraCallVoiceFXState.sampleRate = sampleRate;
+}
+
+void miraCallVoiceFXProcessBuffer(const void *audioSamples, size_t nSamples, size_t nBytesPerSample, size_t nChannels, uint32_t samplesPerSec) {
+    if (g_miraCallVoiceFXPreset.load(std::memory_order_acquire) == 0) {
+        return;
+    }
+    if (audioSamples == nullptr || nSamples == 0 || nBytesPerSample != 2 || nChannels != 1) {
+        return;
+    }
+    if (samplesPerSec < 8000 || samplesPerSec > 192000) {
+        return;
+    }
+
+    uint32_t generation = g_miraCallVoiceFXGeneration.load(std::memory_order_acquire);
+    bool resetState = generation != g_miraCallVoiceFXState.appliedGeneration;
+    if (resetState || g_miraCallVoiceFXState.sampleRate != samplesPerSec) {
+        miraCallVoiceFXConfigure(samplesPerSec, resetState);
+        g_miraCallVoiceFXState.appliedGeneration = generation;
+    }
+
+    const MiraCallVoiceFXConfig &config = g_miraCallVoiceFXState.config;
+    // The ADM hands us its capture buffer solely for forwarding; in-place
+    // mutation here is the intended processing point.
+    int16_t *data = (int16_t *)audioSamples;
+    for (size_t i = 0; i < nSamples; i++) {
+        float x = (float)data[i] * (1.0f / 32768.0f);
+        if (config.bandpass) {
+            x = g_miraCallVoiceFXState.highPass.process(x);
+            x = g_miraCallVoiceFXState.lowPass.process(x);
+        }
+        if (config.drive > 0.0f) {
+            x = tanhf(config.drive * x) * g_miraCallVoiceFXState.driveNorm;
+        }
+        if (config.ringFreq > 0.0f) {
+            x *= sinf(g_miraCallVoiceFXState.ringPhase);
+            g_miraCallVoiceFXState.ringPhase += g_miraCallVoiceFXState.ringPhaseStep;
+            if (g_miraCallVoiceFXState.ringPhase > 2.0f * kMiraCallVoiceFXPi) {
+                g_miraCallVoiceFXState.ringPhase -= 2.0f * kMiraCallVoiceFXPi;
+            }
+        }
+        if (config.bitDepth > 0) {
+            float levels = (float)(1 << (config.bitDepth - 1));
+            float quantized = floorf(x * levels + 0.5f) / levels;
+            if (config.decimate2x) {
+                g_miraCallVoiceFXState.holdCounter++;
+                if ((g_miraCallVoiceFXState.holdCounter & 1) != 0) {
+                    g_miraCallVoiceFXState.heldSample = quantized;
+                }
+                quantized = g_miraCallVoiceFXState.heldSample;
+            }
+            x = quantized;
+        }
+        if (x > 1.0f) {
+            x = 1.0f;
+        } else if (x < -1.0f) {
+            x = -1.0f;
+        }
+        data[i] = (int16_t)(x * 32767.0f);
+    }
+}
+
+void miraCallVoiceFXSetPreset(int32_t preset) {
+    int32_t previous = g_miraCallVoiceFXPreset.exchange(preset, std::memory_order_acq_rel);
+    if (previous != preset) {
+        g_miraCallVoiceFXGeneration.fetch_add(1, std::memory_order_acq_rel);
+    }
+}
+
+void miraCallVoiceFXResetState() {
+    g_miraCallVoiceFXGeneration.fetch_add(1, std::memory_order_acq_rel);
+}
+
+}
+
 @implementation OngoingCallConnectionDescription
 
 - (instancetype _Nonnull)initWithConnectionId:(int64_t)connectionId ip:(NSString * _Nonnull)ip ipv6:(NSString * _Nonnull)ipv6 port:(int32_t)port peerTag:(NSData * _Nonnull)peerTag {
@@ -487,6 +719,7 @@ public:
         bool keyPressed,
         uint32_t& newMicLevel
     ) override {
+        miraCallVoiceFXProcessBuffer(audioSamples, nSamples, nBytesPerSample, nChannels, samplesPerSec);
         _mutex.Lock();
         if (!_audioTransports.empty()) {
             for (size_t i = 0; i < _audioTransports.size(); i++) {
@@ -521,6 +754,7 @@ public:
         uint32_t& newMicLevel,
         absl::optional<int64_t> estimatedCaptureTimeNS
     ) override {
+        miraCallVoiceFXProcessBuffer(audioSamples, nSamples, nBytesPerSample, nChannels, samplesPerSec);
         _mutex.Lock();
         if (!_audioTransports.empty()) {
             for (size_t i = 0; i < _audioTransports.size(); i++) {
@@ -652,6 +886,7 @@ public:
 public:
     virtual void Start() {
         if (!_isStarted) {
+            miraCallVoiceFXResetState();
             _isStarted = true;
             WrappedInstance()->Init();
             
@@ -810,6 +1045,10 @@ private:
 
 - (std::shared_ptr<tgcalls::ThreadLocalObject<tgcalls::SharedAudioDeviceModule>>)getAudioDeviceModule {
     return _audioDeviceModule;
+}
+
++ (void)setVoiceChangerPreset:(int32_t)preset {
+    miraCallVoiceFXSetPreset(preset);
 }
 
 + (void)setupAudioSession {

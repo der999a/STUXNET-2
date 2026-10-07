@@ -40,6 +40,38 @@ public struct LocalOverrideRecord: Codable, Equatable {
     }
 }
 
+public struct FakeMessageRecord: Codable, Equatable {
+    public var id: String
+    public var messagePeerId: Int64
+    public var messageNamespace: Int32
+    public var messageId: Int32
+    public var text: String
+    public var entities: [MessageTextEntity]
+    public var date: Int32
+    public var outgoing: Bool
+
+    public init(id: String = UUID().uuidString, messagePeerId: Int64, messageNamespace: Int32 = Namespaces.Message.Local, messageId: Int32 = 0, text: String, entities: [MessageTextEntity] = [], date: Int32, outgoing: Bool) {
+        self.id = id
+        self.messagePeerId = messagePeerId
+        self.messageNamespace = messageNamespace
+        self.messageId = messageId
+        self.text = text
+        self.entities = entities
+        self.date = date
+        self.outgoing = outgoing
+    }
+
+    // Deterministic, collision-safe globallyUniqueId for insertion (Swift's hashValue is randomized per launch).
+    public var stableUniqueId: Int64 {
+        var hash: UInt64 = 14695981039346656037
+        for byte in self.id.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1099511628211
+        }
+        return Int64(bitPattern: (hash & 0x0000ffffffffffff) | 0x2222000000000000)
+    }
+}
+
 public final class MiraMessageHistoryStore {
     private static let registryQueue = DispatchQueue(label: "org.telegram.mira.messageHistoryStore.registry")
     private static var registeredStores: [Int64: MiraMessageHistoryStore] = [:]
@@ -59,14 +91,20 @@ public final class MiraMessageHistoryStore {
     private let queue = DispatchQueue(label: "org.telegram.mira.messageHistoryStore", qos: .utility)
     private let filePath: String
     private let overridesFilePath: String
+    private let fakeMessagesFilePath: String
     private var cache: [String: [MiraMessageEditRecord]] = [:]
     private var didLoad = false
     private var overrideCache: [String: LocalOverrideRecord] = [:]
     private var didLoadOverrides = false
+    private var fakeCache: [FakeMessageRecord] = []
+    private var didLoadFakes = false
+
+    private let fakeMessagesChangesPromise = ValuePromise<[FakeMessageRecord]>([], ignoreRepeated: true)
 
     public init(basePath: String) {
         self.filePath = basePath + "/mira-message-history.jsonl"
         self.overridesFilePath = basePath + "/mira-local-overrides.jsonl"
+        self.fakeMessagesFilePath = basePath + "/mira-fake-messages.json"
     }
 
     private func messageKey(peerId: Int64, namespace: Int32, id: Int32) -> String {
@@ -133,8 +171,11 @@ public final class MiraMessageHistoryStore {
         self.queue.async {
             self.cache.removeAll()
             self.overrideCache.removeAll()
+            self.fakeCache.removeAll()
             try? FileManager.default.removeItem(atPath: self.filePath)
             try? FileManager.default.removeItem(atPath: self.overridesFilePath)
+            try? FileManager.default.removeItem(atPath: self.fakeMessagesFilePath)
+            self.fakeMessagesChangesPromise.set(self.fakeCache)
         }
     }
 
@@ -204,6 +245,81 @@ public final class MiraMessageHistoryStore {
             self.loadOverridesIfNeeded()
             let peerIdValue = peerId.toInt64()
             return self.overrideCache.values.filter { $0.messagePeerId == peerIdValue }.sorted(by: { $0.date < $1.date })
+        }
+    }
+
+    private func loadFakesIfNeeded() {
+        if self.didLoadFakes {
+            return
+        }
+        self.didLoadFakes = true
+        if let data = FileManager.default.contents(atPath: self.fakeMessagesFilePath), let records = try? JSONDecoder().decode([FakeMessageRecord].self, from: data) {
+            self.fakeCache = records
+        }
+        self.fakeMessagesChangesPromise.set(self.fakeCache)
+    }
+
+    private func saveFakesLocked() {
+        guard let data = try? JSONEncoder().encode(self.fakeCache) else {
+            return
+        }
+        try? data.write(to: URL(fileURLWithPath: self.fakeMessagesFilePath), options: [.atomic])
+    }
+
+    public func fakeMessages(in peerId: PeerId) -> [FakeMessageRecord] {
+        return self.queue.sync {
+            self.loadFakesIfNeeded()
+            let peerIdValue = peerId.toInt64()
+            return self.fakeCache.filter { $0.messagePeerId == peerIdValue }
+        }
+    }
+
+    public func fakeMessage(messageId: MessageId) -> FakeMessageRecord? {
+        return self.queue.sync {
+            self.loadFakesIfNeeded()
+            let peerIdValue = messageId.peerId.toInt64()
+            return self.fakeCache.first(where: { $0.messagePeerId == peerIdValue && $0.messageNamespace == messageId.namespace && $0.messageId == messageId.id && $0.messageId != 0 })
+        }
+    }
+
+    public func fakeMessage(id: String) -> FakeMessageRecord? {
+        return self.queue.sync {
+            self.loadFakesIfNeeded()
+            return self.fakeCache.first(where: { $0.id == id })
+        }
+    }
+
+    public var fakeMessagesChanges: Signal<[FakeMessageRecord], NoError> {
+        return Signal { [weak self] subscriber in
+            guard let self else {
+                return EmptyDisposable
+            }
+            let disposable = self.fakeMessagesChangesPromise.get().start(next: { value in
+                subscriber.putNext(value)
+            })
+            self.queue.async {
+                self.loadFakesIfNeeded()
+            }
+            return disposable
+        }
+    }
+
+    public func addFakeMessage(_ record: FakeMessageRecord) {
+        self.queue.async {
+            self.loadFakesIfNeeded()
+            self.fakeCache.removeAll(where: { $0.id == record.id })
+            self.fakeCache.append(record)
+            self.saveFakesLocked()
+            self.fakeMessagesChangesPromise.set(self.fakeCache)
+        }
+    }
+
+    public func removeFakeMessage(id: String) {
+        self.queue.async {
+            self.loadFakesIfNeeded()
+            self.fakeCache.removeAll(where: { $0.id == id })
+            self.saveFakesLocked()
+            self.fakeMessagesChangesPromise.set(self.fakeCache)
         }
     }
 }

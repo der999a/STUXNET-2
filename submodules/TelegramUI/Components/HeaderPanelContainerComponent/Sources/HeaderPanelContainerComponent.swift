@@ -38,17 +38,20 @@ public final class HeaderPanelContainerComponent: Component {
     public let theme: PresentationTheme
     public let preferClearGlass: Bool
     public let tabs: AnyComponent<Empty>?
+    public let compactTabs: Bool
     public let panels: [Panel]
     
     public init(
         theme: PresentationTheme,
         preferClearGlass: Bool = false,
         tabs: AnyComponent<Empty>?,
+        compactTabs: Bool = false,
         panels: [Panel]
     ) {
         self.theme = theme
         self.preferClearGlass = preferClearGlass
         self.tabs = tabs
+        self.compactTabs = compactTabs
         self.panels = panels
     }
     
@@ -60,6 +63,9 @@ public final class HeaderPanelContainerComponent: Component {
             return false
         }
         if lhs.tabs != rhs.tabs {
+            return false
+        }
+        if lhs.compactTabs != rhs.compactTabs {
             return false
         }
         if lhs.panels != rhs.panels {
@@ -147,7 +153,7 @@ public final class HeaderPanelContainerComponent: Component {
                     transition: tabsTransition,
                     component: tabs,
                     environment: {},
-                    containerSize: CGSize(width: availableSize.width - sideInset * 2.0, height: 40.0)
+                    containerSize: CGSize(width: availableSize.width - sideInset * 2.0, height: component.compactTabs ? 32.0 : 40.0)
                 )
                 let tabsFrame = CGRect(origin: CGPoint(x: 0.0, y: size.height), size: tabsSize)
                 if let tabsComponentView = tabsView.view {
@@ -245,7 +251,7 @@ public final class HeaderPanelContainerComponent: Component {
                 self.panelViews.removeValue(forKey: key)
             }
             
-            let backgroundSize = CGSize(width: size.width, height: max(40.0, size.height))
+            let backgroundSize = CGSize(width: size.width, height: max(component.compactTabs ? 32.0 : 40.0, size.height))
             
             transition.setFrame(view: self.backgroundContainer, frame: CGRect(origin: CGPoint(), size: backgroundSize).insetBy(dx: -32.0, dy: -32.0))
             self.backgroundContainer.update(size: CGSize(width: backgroundSize.width + 32.0 * 2.0, height: backgroundSize.height + 32.0 * 2.0), isDark: component.theme.overallDarkAppearance, transition: transition)

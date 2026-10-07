@@ -126,7 +126,86 @@ private func generateMessageSyntaxHighlight(spec: CachedMessageSyntaxHighlight.S
     return MessageSyntaxHighlight(entities: entities)
 }
 
+private let miraZalgoCombiningRange: ClosedRange<unichar> = 0x0300 ... 0x036F
+private let miraZalgoMaxCombiningRun = 3
+
+private func miraFilterZalgoText(_ text: String, entities: [MessageTextEntity]) -> (String, [MessageTextEntity]) {
+    let nsText = text as NSString
+    let length = nsText.length
+    if length == 0 {
+        return (text, entities)
+    }
+    
+    var removedRanges: [NSRange] = []
+    var runStart = -1
+    var runLength = 0
+    for i in 0 ..< length {
+        if miraZalgoCombiningRange.contains(nsText.character(at: i)) {
+            if runStart < 0 {
+                runStart = i
+                runLength = 0
+            }
+            runLength += 1
+        } else {
+            if runLength > miraZalgoMaxCombiningRun {
+                removedRanges.append(NSRange(location: runStart + miraZalgoMaxCombiningRun, length: runLength - miraZalgoMaxCombiningRun))
+            }
+            runStart = -1
+            runLength = 0
+        }
+    }
+    if runLength > miraZalgoMaxCombiningRun {
+        removedRanges.append(NSRange(location: runStart + miraZalgoMaxCombiningRun, length: runLength - miraZalgoMaxCombiningRun))
+    }
+    if removedRanges.isEmpty {
+        return (text, entities)
+    }
+    
+    let shiftedIndex: (Int) -> Int = { index in
+        var shift = 0
+        for range in removedRanges {
+            if range.location + range.length <= index {
+                shift += range.length
+            } else if range.location < index {
+                shift += index - range.location
+            } else {
+                break
+            }
+        }
+        return index - shift
+    }
+    
+    let result = NSMutableString(capacity: length)
+    var index = 0
+    for range in removedRanges {
+        if range.location > index {
+            result.append(nsText.substring(with: NSRange(location: index, length: range.location - index)))
+        }
+        index = range.location + range.length
+    }
+    if index < length {
+        result.append(nsText.substring(with: NSRange(location: index, length: length - index)))
+    }
+    
+    var filteredEntities: [MessageTextEntity] = []
+    filteredEntities.reserveCapacity(entities.count)
+    for entity in entities {
+        let lowerBound = shiftedIndex(entity.range.lowerBound)
+        let upperBound = shiftedIndex(entity.range.upperBound)
+        if upperBound > lowerBound {
+            filteredEntities.append(MessageTextEntity(range: lowerBound ..< upperBound, type: entity.type))
+        }
+    }
+    
+    return (result as String, filteredEntities)
+}
+
 public func stringWithAppliedEntities(_ text: String, entities: [MessageTextEntity], strings: PresentationStrings? = nil, dateTimeFormat: PresentationDateTimeFormat? = nil, baseColor: UIColor, linkColor: UIColor, baseQuoteTintColor: UIColor? = nil, baseQuoteSecondaryTintColor: UIColor? = nil, baseQuoteTertiaryTintColor: UIColor? = nil, codeBlockTitleColor: UIColor? = nil, codeBlockAccentColor: UIColor? = nil, codeBlockBackgroundColor: UIColor? = nil, baseFont: UIFont, linkFont: UIFont, boldFont: UIFont, italicFont: UIFont, boldItalicFont: UIFont, fixedFont: UIFont, blockQuoteFont: UIFont, underlineLinks: Bool = true, external: Bool = false, message: EngineRawMessage?, entityFiles: [EngineMedia.Id: TelegramMediaFile] = [:], adjustQuoteFontSize: Bool = false, cachedMessageSyntaxHighlight: CachedMessageSyntaxHighlight? = nil, paragraphAlignment: NSTextAlignment? = nil) -> NSAttributedString {
+    var text = text
+    var entities = entities
+    if MiraCoreGate.shared.filterZalgo {
+        (text, entities) = miraFilterZalgoText(text, entities: entities)
+    }
     let baseQuoteTintColor = baseQuoteTintColor ?? baseColor
     
     var nsString: NSString?

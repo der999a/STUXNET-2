@@ -247,6 +247,20 @@ extension ChatControllerImpl {
     }
     
     func dismissMediaRecorder(_ action: ChatFinishMediaRecordingAction) {
+        if case .send = action, self.audioRecorderValue != nil, self.context.sharedContext.immediateMiraSettings.confirmSendVoice {
+            let presentationData = self.presentationData
+            self.present(textAlertController(context: self.context, title: nil, text: "Send this voice message?", actions: [
+                TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+                TextAlertAction(type: .defaultAction, title: "Send", action: { [weak self] in
+                    self?.dismissMediaRecorderBypassingConfirmation(action)
+                })
+            ]), in: .window(.root))
+            return
+        }
+        self.dismissMediaRecorderBypassingConfirmation(action)
+    }
+
+    private func dismissMediaRecorderBypassingConfirmation(_ action: ChatFinishMediaRecordingAction) {
         var updatedAction = action
         var isScheduledMessages = false
         if case .scheduledMessages = self.presentationInterfaceState.subject {
@@ -700,6 +714,27 @@ extension ChatControllerImpl {
     }
     
     func sendMediaRecording(
+        silentPosting: Bool? = nil,
+        scheduleTime: Int32? = nil,
+        repeatPeriod: Int32? = nil,
+        viewOnce: Bool = false,
+        messageEffect: ChatSendMessageEffect? = nil,
+        postpone: Bool = false
+    ) {
+        if self.context.sharedContext.immediateMiraSettings.confirmSendVoice, let recordedMediaPreview = self.presentationInterfaceState.interfaceState.mediaDraftState, case .audio = recordedMediaPreview {
+            let presentationData = self.presentationData
+            self.present(textAlertController(context: self.context, title: nil, text: "Send this voice message?", actions: [
+                TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+                TextAlertAction(type: .defaultAction, title: "Send", action: { [weak self] in
+                    self?.sendMediaRecordingBypassingConfirmation(silentPosting: silentPosting, scheduleTime: scheduleTime, repeatPeriod: repeatPeriod, viewOnce: viewOnce, messageEffect: messageEffect, postpone: postpone)
+                })
+            ]), in: .window(.root))
+            return
+        }
+        self.sendMediaRecordingBypassingConfirmation(silentPosting: silentPosting, scheduleTime: scheduleTime, repeatPeriod: repeatPeriod, viewOnce: viewOnce, messageEffect: messageEffect, postpone: postpone)
+    }
+
+    private func sendMediaRecordingBypassingConfirmation(
         silentPosting: Bool? = nil,
         scheduleTime: Int32? = nil,
         repeatPeriod: Int32? = nil,

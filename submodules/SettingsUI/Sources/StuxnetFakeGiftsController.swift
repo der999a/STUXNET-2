@@ -529,10 +529,11 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
                 if let peer {
                     gift.fromPeerId = peer.id.toInt64()
                     gift.fromName = peer.compactDisplayTitle
-                    persistAndSync(gift)
                 } else {
-                    presentControllerImpl?(textAlertController(context: context, title: "User Not Found", text: "Could not find a user with this username. Leave the field empty for an anonymous sender.", actions: [TextAlertAction(type: .defaultAction, title: "OK", action: {})]))
+                    gift.fromPeerId = nil
+                    gift.fromName = name
                 }
+                persistAndSync(gift)
             }
         })
     }

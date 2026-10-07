@@ -98,10 +98,39 @@ public final class ChatEntityKeyboardInputNode: ChatInputNode {
             self.requestLayout = requestLayout
         }
 
-        public init(chatControllerInteraction: ChatControllerInteraction, panelInteraction: ChatPanelInterfaceInteraction) {
-            self.sendSticker = chatControllerInteraction.sendSticker
+        public init(chatControllerInteraction: ChatControllerInteraction, panelInteraction: ChatPanelInterfaceInteraction, context: AccountContext? = nil) {
+            if let context {
+                self.sendSticker = { fileReference, silentPosting, schedule, query, clearInput, sourceView, sourceRect, sourceLayer, bubbleUpEmojiOrStickersets in
+                    guard context.sharedContext.immediateMiraSettings.confirmSendSticker else {
+                        return chatControllerInteraction.sendSticker(fileReference, silentPosting, schedule, query, clearInput, sourceView, sourceRect, sourceLayer, bubbleUpEmojiOrStickersets)
+                    }
+                    let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+                    chatControllerInteraction.presentGlobalOverlayController(standardTextAlertController(theme: AlertControllerTheme(presentationData: presentationData), title: nil, text: "Send this sticker?", actions: [
+                        TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+                        TextAlertAction(type: .defaultAction, title: "Send", action: { [weak chatControllerInteraction] in
+                            let _ = chatControllerInteraction?.sendSticker(fileReference, silentPosting, schedule, query, clearInput, sourceView, sourceRect, sourceLayer, bubbleUpEmojiOrStickersets)
+                        })
+                    ]), nil)
+                    return true
+                }
+                self.sendGif = { fileReference, sourceView, sourceRect, silentPosting, schedule in
+                    guard context.sharedContext.immediateMiraSettings.confirmSendGif else {
+                        return chatControllerInteraction.sendGif(fileReference, sourceView, sourceRect, silentPosting, schedule)
+                    }
+                    let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+                    chatControllerInteraction.presentGlobalOverlayController(standardTextAlertController(theme: AlertControllerTheme(presentationData: presentationData), title: nil, text: "Send this GIF?", actions: [
+                        TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+                        TextAlertAction(type: .defaultAction, title: "Send", action: { [weak chatControllerInteraction] in
+                            let _ = chatControllerInteraction?.sendGif(fileReference, sourceView, sourceRect, silentPosting, schedule)
+                        })
+                    ]), nil)
+                    return true
+                }
+            } else {
+                self.sendSticker = chatControllerInteraction.sendSticker
+                self.sendGif = chatControllerInteraction.sendGif
+            }
             self.sendEmoji = chatControllerInteraction.sendEmoji
-            self.sendGif = chatControllerInteraction.sendGif
             self.editGif = chatControllerInteraction.editGif
             self.sendBotContextResultAsGif = chatControllerInteraction.sendBotContextResultAsGif
             self.updateChoosingSticker = chatControllerInteraction.updateChoosingSticker

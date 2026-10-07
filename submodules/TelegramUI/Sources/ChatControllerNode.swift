@@ -4021,7 +4021,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             currentInputData: inputMediaNodeData,
             updatedInputData: self.inputMediaNodeDataPromise.get(),
             defaultToEmojiTab: !self.chatPresentationInterfaceState.interfaceState.effectiveInputState.isEmpty || self.chatPresentationInterfaceState.interfaceState.forwardMessageIds != nil || self.openStickersBeginWithEmoji || self.chatPresentationInterfaceState.focusedPollAddOptionMessageId != nil,
-            interaction: ChatEntityKeyboardInputNode.Interaction(chatControllerInteraction: self.controllerInteraction, panelInteraction: interfaceInteraction),
+            interaction: ChatEntityKeyboardInputNode.Interaction(chatControllerInteraction: self.controllerInteraction, panelInteraction: interfaceInteraction, context: self.context),
             chatPeerId: peerId,
             stateContext: self.inputMediaNodeStateContext,
             displayBottomPanel: self.chatPresentationInterfaceState.focusedPollAddOptionMessageId == nil
@@ -4045,7 +4045,17 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                     maskEdge: .clip,
                     sendGif: { [weak self] fileReference, sourceView, sourceRect, silentPosting, schedule in
                         if let self {
-                            return self.controllerInteraction.sendGif(fileReference, sourceView, sourceRect, silentPosting, schedule)
+                            guard self.context.sharedContext.immediateMiraSettings.confirmSendGif else {
+                                return self.controllerInteraction.sendGif(fileReference, sourceView, sourceRect, silentPosting, schedule)
+                            }
+                            let presentationData = self.context.sharedContext.currentPresentationData.with { $0 }
+                            self.controllerInteraction.presentGlobalOverlayController(textAlertController(context: self.context, title: nil, text: "Send this GIF?", actions: [
+                                TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+                                TextAlertAction(type: .defaultAction, title: "Send", action: { [weak self] in
+                                    let _ = self?.controllerInteraction.sendGif(fileReference, sourceView, sourceRect, silentPosting, schedule)
+                                })
+                            ]), nil)
+                            return true
                         } else {
                             return false
                         }

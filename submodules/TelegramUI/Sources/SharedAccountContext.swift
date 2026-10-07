@@ -563,6 +563,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                 gateSnapshot.localMessageEditEnabled = settings.localMessageEditEnabled
                 gateSnapshot.isGhostActive = ghostSettings.isGhostActive
                 gateSnapshot.fakeGiftsEnabled = settings.fakeGiftsEnabled
+                gateSnapshot.voiceChangerEnabled = settings.voiceChangerEnabled
+                gateSnapshot.voiceChangerPreset = settings.voiceChangerPreset
                 MiraCoreGate.shared.apply(gateSnapshot)
             }
         })

@@ -4,6 +4,8 @@ import Display
 import AccountContext
 import SwiftSignalKit
 import TelegramCore
+import TelegramUIPreferences
+import PresentationDataUtils
 import AvatarNode
 
 public extension StoryContainerScreen {
@@ -160,6 +162,59 @@ public extension StoryContainerScreen {
     }
     
     static func openPeerStoriesCustom(
+        context: AccountContext,
+        peerId: EnginePeer.Id,
+        focusOnId: Int32? = nil,
+        isHidden: Bool,
+        initialOrder: [EnginePeer.Id] = [],
+        singlePeer: Bool,
+        parentController: ViewController,
+        transitionIn: @escaping () -> StoryContainerScreen.TransitionIn?,
+        transitionOut: @escaping (EnginePeer.Id) -> StoryContainerScreen.TransitionOut?,
+        setFocusedItem: @escaping (Signal<EngineStoryId?, NoError>) -> Void,
+        setProgress: @escaping (Signal<Never, NoError>) -> Void,
+        completion: @escaping (StoryContainerScreen) -> Void = { _ in }
+    ) {
+        if context.sharedContext.immediateMiraSettings.confirmViewStory {
+            let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+            parentController.present(textAlertController(context: context, title: nil, text: "Open stories?", actions: [
+                TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+                TextAlertAction(type: .defaultAction, title: "Open", action: {
+                    openPeerStoriesCustomConfirmed(
+                        context: context,
+                        peerId: peerId,
+                        focusOnId: focusOnId,
+                        isHidden: isHidden,
+                        initialOrder: initialOrder,
+                        singlePeer: singlePeer,
+                        parentController: parentController,
+                        transitionIn: transitionIn,
+                        transitionOut: transitionOut,
+                        setFocusedItem: setFocusedItem,
+                        setProgress: setProgress,
+                        completion: completion
+                    )
+                })
+            ]), in: .window(.root))
+            return
+        }
+        openPeerStoriesCustomConfirmed(
+            context: context,
+            peerId: peerId,
+            focusOnId: focusOnId,
+            isHidden: isHidden,
+            initialOrder: initialOrder,
+            singlePeer: singlePeer,
+            parentController: parentController,
+            transitionIn: transitionIn,
+            transitionOut: transitionOut,
+            setFocusedItem: setFocusedItem,
+            setProgress: setProgress,
+            completion: completion
+        )
+    }
+
+    private static func openPeerStoriesCustomConfirmed(
         context: AccountContext,
         peerId: EnginePeer.Id,
         focusOnId: Int32? = nil,

@@ -1223,7 +1223,11 @@ final class PeerInfoHeaderNode: ASDisplayNode {
             }
             if title.isEmpty {
                 if case let .user(user) = peer, let phone = user.phone {
-                    title = formatPhoneNumber(context: self.context, number: phone)
+                    var formattedPhone = formatPhoneNumber(context: self.context, number: phone)
+                    if peer.id == self.context.account.peerId, self.context.sharedContext.immediateMiraSettings.hidePhoneNumber {
+                        formattedPhone = miraMaskPhoneNumber(formattedPhone)
+                    }
+                    title = formattedPhone
                 } else if let addressName = peer.addressName {
                     title = "@\(addressName)"
                 } else {
@@ -1237,7 +1241,10 @@ final class PeerInfoHeaderNode: ASDisplayNode {
             
             if self.isSettings, case let .user(user) = peer {
                 var subtitle = formatPhoneNumber(context: self.context, number: user.phone ?? "")
-                
+                if peer.id == self.context.account.peerId, self.context.sharedContext.immediateMiraSettings.hidePhoneNumber {
+                    subtitle = miraMaskPhoneNumber(subtitle)
+                }
+
                 if let mainUsername = user.addressName, !mainUsername.isEmpty {
                     subtitle = "\(subtitle) • @\(mainUsername)"
                 }

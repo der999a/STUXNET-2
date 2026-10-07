@@ -11,6 +11,7 @@ import PhotoResources
 import ItemListPeerItem
 import DeviceAccess
 import TelegramStringFormatting
+import TelegramUIPreferences
 import PeerNameColorItem
 
 enum SettingsSection: Int, CaseIterable {
@@ -449,7 +450,8 @@ func settingsEditingItems(data: PeerInfoScreenData?, state: PeerInfoState, conte
     }
     
     if case let .user(user) = data.peer {
-        items[.info]!.append(PeerInfoScreenDisclosureItem(id: ItemPhoneNumber, label: .text(user.phone.flatMap({ formatPhoneNumber(context: context, number: $0) }) ?? ""), text: presentationData.strings.Settings_PhoneNumber, icon: PresentationResourcesSettings.recentCalls, action: {
+        let settingsPhoneLabel = user.phone.flatMap({ formatPhoneNumber(context: context, number: $0) }).flatMap({ context.sharedContext.immediateMiraSettings.hidePhoneNumber ? miraMaskPhoneNumber($0) : $0 }) ?? ""
+        items[.info]!.append(PeerInfoScreenDisclosureItem(id: ItemPhoneNumber, label: .text(settingsPhoneLabel), text: presentationData.strings.Settings_PhoneNumber, icon: PresentationResourcesSettings.recentCalls, action: {
             interaction.openSettings(.phoneNumber)
         }))
     }

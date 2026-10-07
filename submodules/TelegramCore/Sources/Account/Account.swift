@@ -1644,12 +1644,11 @@ public class Account {
     }
     
     public func updateLocalInputActivity(peerId: PeerActivitySpace, activity: PeerInputActivity, isPresent: Bool) {
-        guard MiraCoreGate.shared.sendUploadProgress else {
-            return
-        }
         self.localInputActivityManager.transaction { manager in
             if isPresent {
-                manager.addActivity(chatPeerId: peerId, peerId: self.peerId, activity: activity)
+                if MiraCoreGate.shared.sendUploadProgress {
+                    manager.addActivity(chatPeerId: peerId, peerId: self.peerId, activity: activity)
+                }
             } else {
                 manager.removeActivity(chatPeerId: peerId, peerId: self.peerId, activity: activity)
             }
@@ -1657,6 +1656,9 @@ public class Account {
     }
     
     public func acquireLocalInputActivity(peerId: PeerActivitySpace, activity: PeerInputActivity) -> Disposable {
+        guard MiraCoreGate.shared.sendUploadProgress else {
+            return EmptyDisposable
+        }
         return self.localInputActivityManager.acquireActivity(chatPeerId: peerId, peerId: self.peerId, activity: activity)
     }
     

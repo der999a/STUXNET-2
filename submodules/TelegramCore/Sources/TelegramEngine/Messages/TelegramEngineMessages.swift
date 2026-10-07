@@ -227,6 +227,53 @@ public extension TelegramEngine {
             }
         }
 
+        public func miraAddFakeMessage(peerId: PeerId, text: String, outgoing: Bool, date: Int32) -> Signal<Void, NoError> {
+            let account = self.account
+            var record = FakeMessageRecord(messagePeerId: peerId.toInt64(), text: text, date: date, outgoing: outgoing)
+            return account.postbox.transaction { transaction -> Void in
+                var flags = StoreMessageFlags()
+                if !outgoing {
+                    flags.insert(.Incoming)
+                }
+                let authorId: PeerId = outgoing ? account.peerId : peerId
+                let message = StoreMessage(
+                    peerId: peerId,
+                    namespace: Namespaces.Message.Local,
+                    customStableId: nil,
+                    globallyUniqueId: record.stableUniqueId,
+                    groupingKey: nil,
+                    threadId: nil,
+                    timestamp: date,
+                    flags: flags,
+                    tags: [],
+                    globalTags: [],
+                    localTags: [],
+                    forwardInfo: nil,
+                    authorId: authorId,
+                    text: text,
+                    attributes: [],
+                    media: []
+                )
+                let mapping = transaction.addMessages([message], location: .Random)
+                if let messageId = mapping[record.stableUniqueId] {
+                    record.messageId = messageId.id
+                    record.messageNamespace = messageId.namespace
+                    record.messagePeerId = messageId.peerId.toInt64()
+                }
+                account.miraMessageHistoryStore.addFakeMessage(record)
+            }
+        }
+
+        public func miraRemoveFakeMessage(id: String) -> Signal<Void, NoError> {
+            let account = self.account
+            return account.postbox.transaction { transaction -> Void in
+                if let record = account.miraMessageHistoryStore.fakeMessage(id: id), record.messageId != 0 {
+                    transaction.deleteMessages([MessageId(peerId: PeerId(record.messagePeerId), namespace: record.messageNamespace, id: record.messageId)], forEachMedia: nil)
+                }
+                account.miraMessageHistoryStore.removeFakeMessage(id: id)
+            }
+        }
+
         public func clearAuthorHistory(peerId: PeerId, memberId: PeerId) -> Signal<Void, NoError> {
             return _internal_clearAuthorHistory(account: self.account, peerId: peerId, memberId: memberId)
         }

@@ -536,6 +536,7 @@ public final class OngoingGroupCallContext {
                 self.audioDevice = sharedAudioDevice
             }
             let audioDevice = self.audioDevice
+            SharedCallAudioDevice.setVoiceChangerPreset(MiraCoreGate.shared.voiceChangerEnabled ? MiraCoreGate.shared.voiceChangerPreset : 0)
 #endif
             var networkStateUpdatedImpl: ((GroupCallNetworkState) -> Void)?
             var audioLevelsUpdatedImpl: (([NSNumber]) -> Void)?

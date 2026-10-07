@@ -1661,6 +1661,26 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
                     })))
                 }
             }
+            if context.sharedContext.immediateMiraSettings.fakeMessagesEnabled {
+                actions.append(.action(ContextMenuActionItem(text: "Add Fake Message…", icon: { theme in
+                    return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Add"), color: theme.actionSheet.primaryTextColor)
+                }, action: { c, _ in
+                    c?.dismiss(completion: {
+                        guard let navigationController = controllerInteraction.navigationController() else {
+                            return
+                        }
+                        navigationController.pushViewController(miraFakeMessageController(context: context, peerId: message.id.peerId))
+                    })
+                })))
+            }
+            if let fake = miraStore.fakeMessage(messageId: message.id) {
+                actions.append(.action(ContextMenuActionItem(text: "Remove Fake Message", textColor: .destructive, icon: { theme in
+                    return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Delete"), color: theme.actionSheet.destructiveActionTextColor)
+                }, action: { c, f in
+                    let _ = context.engine.messages.miraRemoveFakeMessage(id: fake.id).start()
+                    f(.default)
+                })))
+            }
         }
         
         if let message = messages.first, message.id.namespace == Namespaces.Message.Cloud, let channel = message.peers[message.id.peerId] as? TelegramChannel, channel.isMonoForum {
