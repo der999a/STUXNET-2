@@ -1566,6 +1566,10 @@ plist_fragment(
     </array>
     <key>CFBundleAllowMixedLocalizations</key>
     <true/>
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>

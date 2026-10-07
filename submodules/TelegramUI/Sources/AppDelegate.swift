@@ -650,7 +650,9 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             // strips the App Groups entitlement, so the shared container is unavailable.
             // Fall back to the app sandbox instead of aborting into a black screen.
             // Extensions (Share/NotificationService/Widget) won't share account data.
-            let fallbackUrl = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("telegram-data", isDirectory: true)
+            // The path lives in Documents so Files-app access (UIFileSharingEnabled)
+            // can reach the logs for debugging.
+            let fallbackUrl = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("telegram-data", isDirectory: true)
             try? FileManager.default.createDirectory(at: fallbackUrl, withIntermediateDirectories: true)
             appGroupUrl = fallbackUrl
         }

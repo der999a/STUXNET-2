@@ -132,6 +132,32 @@ jobs:
 
       - name: Import fake codesigning certificates
         working-directory: ${{ env.SOURCE_DIR }}
+
+      - name: Apply custom API credentials from repo variables (optional)
+        working-directory: ${{ env.SOURCE_DIR }}
+        env:
+          STUXNET_API_ID: ${{ vars.STUXNET_API_ID }}
+          STUXNET_API_HASH: ${{ vars.STUXNET_API_HASH }}
+        run: |
+          set -e
+          # Forks logging in with the stock api_id=8 can be throttled by Telegram
+          # (auth.sendCode never returns = infinite spinner). Register your own app
+          # at https://my.telegram.org/apps and set repository variables
+          # STUXNET_API_ID / STUXNET_API_HASH to use them here.
+          python3 - "$BUILD_CONFIGURATION_PATH" <<'EOF'
+          import json, os, sys
+          path = sys.argv[1]
+          cfg = json.load(open(path))
+          api_id = os.environ.get("STUXNET_API_ID", "").strip()
+          api_hash = os.environ.get("STUXNET_API_HASH", "").strip()
+          if api_id and api_hash:
+              cfg["api_id"] = api_id
+              cfg["api_hash"] = api_hash
+              json.dump(cfg, open(path, "w"), indent="\t")
+              print(f"Applied custom api_id={api_id} to {path}")
+          else:
+              print("No STUXNET_API_ID/STUXNET_API_HASH set — using config as-is")
+          EOF
         run: python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
 
       - name: Compute build number
