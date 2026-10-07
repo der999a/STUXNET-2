@@ -92,6 +92,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
         case let .input(text):
             return ItemListMultilineInputItem(presentationData: presentationData, text: text, placeholder: "Message text", maxLength: nil, sectionId: self.section, style: .blocks, textUpdated: { value in
                 arguments.state.text = value
+                arguments.updated()
             })
         case let .batchMode(value):
             return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "One message per line", value: value, sectionId: self.section, style: .blocks, updated: { value in
@@ -115,6 +116,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
         case let .senderInput(text):
             return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: text, placeholder: "@username or user ID", type: .regular(capitalization: false, autocorrection: false), sectionId: self.section, textUpdated: { value in
                 arguments.state.sender = value
+                arguments.updated()
             }, action: {})
         case .dateHeader:
             return ItemListSectionHeaderItem(presentationData: presentationData, text: "Date", sectionId: self.section)
@@ -126,6 +128,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
         case let .customDays(text):
             return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: text, placeholder: "Days back", type: .number, sectionId: self.section, textUpdated: { value in
                 arguments.state.customDaysBack = value
+                arguments.updated()
             }, action: {
             })
         case let .hint(text):
