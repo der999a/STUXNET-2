@@ -227,15 +227,15 @@ public extension TelegramEngine {
             }
         }
 
-        public func miraAddFakeMessage(peerId: PeerId, text: String, outgoing: Bool, date: Int32) -> Signal<Void, NoError> {
+        public func miraAddFakeMessage(peerId: PeerId, text: String, outgoing: Bool, date: Int32, authorPeerId: PeerId? = nil, authorName: String? = nil) -> Signal<Void, NoError> {
             let account = self.account
-            var record = FakeMessageRecord(messagePeerId: peerId.toInt64(), text: text, date: date, outgoing: outgoing)
+            var record = FakeMessageRecord(messagePeerId: peerId.toInt64(), text: text, date: date, outgoing: outgoing, authorPeerId: outgoing ? nil : authorPeerId?.toInt64(), authorName: outgoing ? nil : authorName)
             return account.postbox.transaction { transaction -> Void in
                 var flags = StoreMessageFlags()
                 if !outgoing {
                     flags.insert(.Incoming)
                 }
-                let authorId: PeerId = outgoing ? account.peerId : peerId
+                let authorId: PeerId = outgoing ? account.peerId : (authorPeerId ?? peerId)
                 let message = StoreMessage(
                     peerId: peerId,
                     namespace: Namespaces.Message.Local,

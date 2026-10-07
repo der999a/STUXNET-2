@@ -49,8 +49,10 @@ public struct FakeMessageRecord: Codable, Equatable {
     public var entities: [MessageTextEntity]
     public var date: Int32
     public var outgoing: Bool
+    public var authorPeerId: Int64?
+    public var authorName: String?
 
-    public init(id: String = UUID().uuidString, messagePeerId: Int64, messageNamespace: Int32 = Namespaces.Message.Local, messageId: Int32 = 0, text: String, entities: [MessageTextEntity] = [], date: Int32, outgoing: Bool) {
+    public init(id: String = UUID().uuidString, messagePeerId: Int64, messageNamespace: Int32 = Namespaces.Message.Local, messageId: Int32 = 0, text: String, entities: [MessageTextEntity] = [], date: Int32, outgoing: Bool, authorPeerId: Int64? = nil, authorName: String? = nil) {
         self.id = id
         self.messagePeerId = messagePeerId
         self.messageNamespace = messageNamespace
@@ -59,6 +61,8 @@ public struct FakeMessageRecord: Codable, Equatable {
         self.entities = entities
         self.date = date
         self.outgoing = outgoing
+        self.authorPeerId = authorPeerId
+        self.authorName = authorName
     }
 
     // Deterministic, collision-safe globallyUniqueId for insertion (Swift's hashValue is randomized per launch).
