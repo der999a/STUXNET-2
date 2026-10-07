@@ -33,11 +33,14 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Single point of change if you fork with your own api_id / bundle_id / team_id
-  # (README.md: "Creating your Telegram Application"). The stock
-  # appstore-configuration.json ships with Telegram's own api_id=8; that is what
-  # the repo's own CI used for unsigned builds, so it is kept as the default here.
-  BUILD_CONFIGURATION_PATH: build-system/appstore-configuration.json
+  # Build configuration. Default = sideload-friendly (own bundle id com.stuxnet.ios,
+  # no Siri/iCloud entitlements — re-signable via Sideloadly/AltStore with a free
+  # Apple account; the app also falls back to its sandbox if App Groups are stripped).
+  # Override via repository variable STUXNET_BUILD_CONFIG (Settings → Secrets and
+  # variables → Actions → Variables), e.g. build-system/appstore-configuration.json.
+  # The stock appstore config ships Telegram's own api_id=8; that is what the repo's
+  # own CI used for unsigned builds.
+  BUILD_CONFIGURATION_PATH: ${{ vars.STUXNET_BUILD_CONFIG || 'build-system/sideload-configuration.json' }}
   CODESIGNING_INFO_PATH: build-system/fake-codesigning
   # Bazel disk-cache directory consumed by Make.py --cacheDir (cached across runs).
   BAZEL_CACHE_DIR: ${{ github.workspace }}/../telegram-bazel-cache

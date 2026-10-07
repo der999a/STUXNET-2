@@ -642,9 +642,17 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             isICloudEnabled: buildConfig.isICloudEnabled
         )
         
-        guard let appGroupUrl = maybeAppGroupUrl else {
-            self.mainWindow?.presentNative(UIAlertController(title: nil, message: "Error 2", preferredStyle: .alert))
-            return true
+        let appGroupUrl: URL
+        if let maybeAppGroupUrl = maybeAppGroupUrl {
+            appGroupUrl = maybeAppGroupUrl
+        } else {
+            // Sideload fallback: re-signing (e.g. Sideloadly with a free Apple account)
+            // strips the App Groups entitlement, so the shared container is unavailable.
+            // Fall back to the app sandbox instead of aborting into a black screen.
+            // Extensions (Share/NotificationService/Widget) won't share account data.
+            let fallbackUrl = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("telegram-data", isDirectory: true)
+            try? FileManager.default.createDirectory(at: fallbackUrl, withIntermediateDirectories: true)
+            appGroupUrl = fallbackUrl
         }
         
         var isDebugConfiguration = false
