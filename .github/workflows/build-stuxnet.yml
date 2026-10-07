@@ -105,8 +105,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            ${{ env.BAZEL_CACHE_DIR }}
-            ${{ env.BAZEL_USER_ROOT }}
+            ${{ runner.temp }}/telegram-bazel-cache
+            ${{ runner.temp }}/telegram-bazel-user-root
             build-input
           key: ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-${{ github.run_id }}
           restore-keys: |
@@ -244,7 +244,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            ${{ env.BAZEL_CACHE_DIR }}
-            ${{ env.BAZEL_USER_ROOT }}
+            ${{ runner.temp }}/telegram-bazel-cache
+            ${{ runner.temp }}/telegram-bazel-user-root
             build-input
           key: ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-${{ github.run_id }}
