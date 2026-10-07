@@ -81,6 +81,11 @@ jobs:
           fi
           sudo xcode-select -s "$XCODE_APP/Contents/Developer"
           xcodebuild -version
+          # Xcode 26 ships Metal as a downloadable component; some runner images
+          # lack it and MetalCompile fails with "missing Metal Toolchain".
+          for i in 1 2 3; do
+            xcodebuild -downloadComponent MetalToolchain && break || sleep 10
+          done
           echo "XCODE_OVERRIDE_FLAG=$OVERRIDE" >> "$GITHUB_ENV"
 
       - name: Cache Bazel disk cache and toolchain
