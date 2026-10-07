@@ -173,7 +173,7 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
 
     let controller = ItemListController(context: context, state: signal)
     dismissImpl = { [weak controller] in
-        (controller?.navigationController as? NavigationController)?.popViewController(animated: true)
+        let _ = (controller?.navigationController as? NavigationController)?.popViewController(animated: true)
     }
     return controller
 }
