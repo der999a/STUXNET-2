@@ -690,14 +690,31 @@ private final class StuxnetFakeGiftPickerArguments {
     let catalogPromise = ValuePromise<[StarGift.Gift]?>(nil, ignoreRepeated: true)
 
     func load(context: AccountContext) {
+        // Reuse snapshots from previously configured gifts when Telegram's
+        // catalog is unavailable. Snapshots contain the real media resource,
+        // so offline entries still render like normal Telegram gifts.
+        let fallbackGifts: [StarGift.Gift] = context.account.miraFakeGiftsStore.list().compactMap { entry in
+            guard let snapshot = entry.giftSnapshot else {
+                return nil
+            }
+            if case let .generic(gift) = snapshot {
+                return gift
+            }
+            return nil
+        }
         self.disposable.set((context.engine.payments.cachedStarGifts()
+        |> timeout(3.0, queue: .mainQueue(), alternate: .single(nil))
         |> map { items -> [StarGift.Gift]? in
-            return items?.compactMap { gift -> StarGift.Gift? in
+            let catalogGifts = items?.compactMap { gift -> StarGift.Gift? in
                 if case let .generic(genericGift) = gift {
                     return genericGift
                 }
                 return nil
             }
+            if let catalogGifts, !catalogGifts.isEmpty {
+                return catalogGifts
+            }
+            return fallbackGifts.isEmpty ? [] : fallbackGifts
         }
         |> deliverOnMainQueue).start(next: { [weak self] gifts in
             self?.catalogPromise.set(gifts)
@@ -714,6 +731,7 @@ private final class StuxnetFakeGiftPickerArguments {
 private enum StuxnetFakeGiftPickerEntry: ItemListNodeEntry {
     case gift(Int, StarGift.Gift, Bool)
     case loading(String)
+    case empty(String)
 
     var section: ItemListSectionId {
         return 0
@@ -725,6 +743,8 @@ private enum StuxnetFakeGiftPickerEntry: ItemListNodeEntry {
             return index
         case .loading:
             return 100000
+        case .empty:
+            return 100001
         }
     }
 
@@ -740,6 +760,8 @@ private enum StuxnetFakeGiftPickerEntry: ItemListNodeEntry {
                 arguments.select(gift)
             })
         case let .loading(text):
+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+        case let .empty(text):
             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         }
     }
@@ -763,8 +785,10 @@ private func stuxnetFakeGiftPickerController(context: AccountContext, currentGif
                 entries.append(.gift(index, gift, gift.id == currentGiftId))
                 index += 1
             }
-        } else {
+        } else if gifts == nil {
             entries.append(.loading("Loading gifts..."))
+        } else {
+            entries.append(.empty("No cached gifts available. Add a gift while online, then it will remain available here offline."))
         }
 
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Select Gift"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
