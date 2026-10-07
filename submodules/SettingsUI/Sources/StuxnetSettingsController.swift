@@ -73,6 +73,7 @@ private final class StuxnetControllerArguments {
     let updateSettings: (@escaping (inout MiraSettings) -> Void) -> Void
     let updateGhostSettings: (@escaping (inout MiraGhostSettings) -> Void) -> Void
     let pushController: (ViewController) -> Void
+    var presentController: ((ViewController) -> Void)?
 
     init(context: AccountContext, updateSettings: @escaping (@escaping (inout MiraSettings) -> Void) -> Void, updateGhostSettings: @escaping (@escaping (inout MiraGhostSettings) -> Void) -> Void, pushController: @escaping (ViewController) -> Void) {
         self.context = context
@@ -117,6 +118,7 @@ private final class StuxnetOptionsPickerArguments<T: Equatable> {
 
 private enum StuxnetOptionsPickerEntry<T: Equatable>: ItemListNodeEntry {
     case option(Int, T, String, Bool)
+    case footer(String)
 
     var section: ItemListSectionId {
         return 0
@@ -126,6 +128,8 @@ private enum StuxnetOptionsPickerEntry<T: Equatable>: ItemListNodeEntry {
         switch self {
         case let .option(index, _, _, _):
             return index
+        case .footer:
+            return Int.max
         }
     }
 
@@ -140,11 +144,13 @@ private enum StuxnetOptionsPickerEntry<T: Equatable>: ItemListNodeEntry {
             return ItemListCheckboxItem(presentationData: presentationData, systemStyle: .glass, title: title, style: .right, checked: isSelected, zeroSeparatorInsets: false, sectionId: self.section, action: {
                 arguments.select(value)
             })
+        case let .footer(text):
+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         }
     }
 }
 
-private func stuxnetOptionsPickerController<T: Equatable>(context: AccountContext, title: String, options: [(T, String)], currentValue: @escaping (MiraSettings) -> T, updateValue: @escaping (inout MiraSettings, T) -> Void) -> ViewController {
+private func stuxnetOptionsPickerController<T: Equatable>(context: AccountContext, title: String, options: [(T, String)], currentValue: @escaping (MiraSettings) -> T, updateValue: @escaping (inout MiraSettings, T) -> Void, footer: String? = nil) -> ViewController {
     let accountManager = context.sharedContext.accountManager
 
     let arguments = StuxnetOptionsPickerArguments<T>(select: { value in
@@ -163,6 +169,9 @@ private func stuxnetOptionsPickerController<T: Equatable>(context: AccountContex
             entries.append(.option(index, value, optionTitle, value == current))
             index += 1
         }
+        if let footer {
+            entries.append(.footer(footer))
+        }
 
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
@@ -175,6 +184,11 @@ private func stuxnetOptionsPickerController<T: Equatable>(context: AccountContex
 
 // MARK: - Hub
 
+private enum StuxnetHubSection: Int32 {
+    case main
+    case actions
+}
+
 private enum StuxnetHubEntry: ItemListNodeEntry {
     case ghost(Bool)
     case privacy
@@ -182,9 +196,16 @@ private enum StuxnetHubEntry: ItemListNodeEntry {
     case fake
     case voiceChanger(Bool)
     case appearance
+    case resetAll
+    case versionInfo(String)
 
     var section: ItemListSectionId {
-        return 0
+        switch self {
+        case .ghost, .privacy, .spy, .fake, .voiceChanger, .appearance:
+            return StuxnetHubSection.main.rawValue
+        case .resetAll, .versionInfo:
+            return StuxnetHubSection.actions.rawValue
+        }
     }
 
     var stableId: Int {
@@ -201,6 +222,10 @@ private enum StuxnetHubEntry: ItemListNodeEntry {
             return 4
         case .appearance:
             return 5
+        case .resetAll:
+            return 6
+        case .versionInfo:
+            return 7
         }
     }
 
@@ -235,6 +260,21 @@ private enum StuxnetHubEntry: ItemListNodeEntry {
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: PresentationResourcesSettings.appearance, title: "Appearance & Misc", label: "", sectionId: self.section, style: .blocks, action: {
                 arguments.pushController(stuxnetAppearanceSettingsController(context: arguments.context))
             })
+        case .resetAll:
+            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: "Reset All Stuxnet Settings", kind: .destructive, alignment: .center, sectionId: self.section, style: .blocks, action: {
+                let controller = textAlertController(context: arguments.context, title: "Reset All Stuxnet Settings?", text: "All Stuxnet settings will be reset to their defaults. This cannot be undone.", actions: [
+                    TextAlertAction(type: .destructiveAction, title: "Reset", action: {
+                        arguments.updateSettings { settings in
+                            settings = .defaultSettings
+                        }
+                    }),
+                    TextAlertAction(type: .genericAction, title: "Cancel", action: {
+                    })
+                ])
+                arguments.presentController?(controller)
+            })
+        case let .versionInfo(text):
+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         }
     }
 }
@@ -247,21 +287,30 @@ private func stuxnetHubEntries(settings: MiraSettings) -> [StuxnetHubEntry] {
     entries.append(.fake)
     entries.append(.voiceChanger(settings.voiceChangerEnabled))
     entries.append(.appearance)
+    entries.append(.resetAll)
+    entries.append(.versionInfo("Stuxnet 12.9.2 · client-side only · nothing is sent to servers"))
     return entries
 }
 
 public func stuxnetSettingsController(context: AccountContext) -> ViewController {
     var pushControllerImpl: ((ViewController) -> Void)?
+    var presentControllerImpl: ((ViewController) -> Void)?
 
     let arguments = stuxnetControllerArguments(context: context, pushController: { controller in
         pushControllerImpl?(controller)
     })
+    arguments.presentController = { controller in
+        presentControllerImpl?(controller)
+    }
 
     let controller = stuxnetItemListController(context: context, title: "Stuxnet", arguments: arguments, entries: { settings in
         return stuxnetHubEntries(settings: settings)
     })
     pushControllerImpl = { [weak controller] c in
         (controller?.navigationController as? NavigationController)?.pushViewController(c)
+    }
+    presentControllerImpl = { [weak controller] c in
+        controller?.present(c, in: .window(.root))
     }
     return controller
 }
@@ -1180,7 +1229,7 @@ private enum StuxnetVoiceChangerEntry: ItemListNodeEntry {
                     return Int64(settings.voiceChangerPreset)
                 }, updateValue: { settings, value in
                     settings.voiceChangerPreset = Int32(value)
-                }))
+                }, footer: "Anonymous/Demon/Cyber/Masked chains also apply to calls (timbre-only)."))
             })
         }
     }

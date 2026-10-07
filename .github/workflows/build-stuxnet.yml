@@ -132,6 +132,7 @@ jobs:
 
       - name: Import fake codesigning certificates
         working-directory: ${{ env.SOURCE_DIR }}
+        run: python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
 
       - name: Apply custom API credentials from repo variables (optional)
         working-directory: ${{ env.SOURCE_DIR }}
@@ -158,7 +159,6 @@ jobs:
           else:
               print("No STUXNET_API_ID/STUXNET_API_HASH set — using config as-is")
           EOF
-        run: python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
 
       - name: Compute build number
         working-directory: ${{ env.SOURCE_DIR }}
