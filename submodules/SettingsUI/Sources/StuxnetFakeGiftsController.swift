@@ -609,9 +609,20 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         guard let existingGift else {
             return
         }
-        store.deleteChatMessage(account: context.account, entry: existingGift)
-        store.remove(id: existingGift.id)
-        dismissImpl?()
+        let alert = textAlertController(
+            context: context,
+            title: "Delete Gift?",
+            text: "This gift will be removed from your local profile preview and chat.",
+            actions: [
+                TextAlertAction(type: .genericAction, title: currentPresentationData.strings.Common_Cancel, action: {}),
+                TextAlertAction(type: .defaultDestructiveAction, title: currentPresentationData.strings.Common_Delete, action: {
+                    store.deleteChatMessage(account: context.account, entry: existingGift)
+                    store.remove(id: existingGift.id)
+                    dismissImpl?()
+                })
+            ]
+        )
+        presentControllerImpl?(alert)
     })
 
     let signal = combineLatest(context.sharedContext.presentationData, statePromise.get())
