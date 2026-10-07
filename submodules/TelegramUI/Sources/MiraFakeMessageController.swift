@@ -136,7 +136,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
                 arguments.updated()
             })
         case let .exactDatePicker(timestamp, selectingDate):
-            return ItemListDatePickerItem(presentationData: presentationData, systemStyle: .glass, dateTimeFormat: presentationData.dateTimeFormat, date: Date(timeIntervalSince1970: TimeInterval(timestamp)), minDate: 0, title: "Exact date & time", displayingDateSelection: selectingDate, displayingTimeSelection: !selectingDate, sectionId: self.section, style: .blocks, toggleDateSelection: {
+            return ItemListDatePickerItem(presentationData: presentationData, systemStyle: .glass, dateTimeFormat: presentationData.dateTimeFormat, date: timestamp, minDate: 0, title: "Exact date & time", displayingDateSelection: selectingDate, displayingTimeSelection: !selectingDate, sectionId: self.section, style: .blocks, toggleDateSelection: {
                 arguments.state.exactDateSelection = true
                 arguments.updated()
             }, toggleTimeSelection: {
@@ -145,7 +145,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
             }, updated: { date in
                 let calendar = Calendar.current
                 let previousSeconds = calendar.component(.second, from: Date(timeIntervalSince1970: TimeInterval(arguments.state.exactDate)))
-                var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+                var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date(timeIntervalSince1970: TimeInterval(date)))
                 components.second = previousSeconds
                 if let updatedDate = calendar.date(from: components) {
                     arguments.state.exactDate = Int32(updatedDate.timeIntervalSince1970)
