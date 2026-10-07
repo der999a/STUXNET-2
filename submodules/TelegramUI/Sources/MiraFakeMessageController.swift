@@ -327,17 +327,19 @@ public func miraFakeMessagesController(context: AccountContext, peerId: PeerId) 
     let arguments = MiraFakeMessagesListArguments(add: {
         pushControllerImpl?(miraFakeMessageController(context: context, peerId: peerId))
     }, confirmRemoveAll: {
+        let strings = context.sharedContext.currentPresentationData.with { $0.strings }
         let controller = textAlertController(context: context, title: "Remove Fake Messages?", text: "All local fake messages in this chat will be removed.", actions: [
-            TextAlertAction(type: .genericAction, title: "Cancel", action: {}),
-            TextAlertAction(type: .destructiveAction, title: "Remove All", action: {
+            TextAlertAction(type: .genericAction, title: strings.Common_Cancel, action: {}),
+            TextAlertAction(type: .destructiveAction, title: strings.Common_Delete, action: {
                 let _ = context.engine.messages.miraRemoveAllFakeMessages(peerId: peerId).start()
             })
         ])
         presentControllerImpl?(controller)
     }, confirmRemove: { record in
+        let strings = context.sharedContext.currentPresentationData.with { $0.strings }
         let controller = textAlertController(context: context, title: "Remove Fake Message?", text: "This local message will be removed from the chat.", actions: [
-            TextAlertAction(type: .genericAction, title: "Cancel", action: {}),
-            TextAlertAction(type: .destructiveAction, title: "Remove", action: {
+            TextAlertAction(type: .genericAction, title: strings.Common_Cancel, action: {}),
+            TextAlertAction(type: .destructiveAction, title: strings.Common_Delete, action: {
                 let _ = context.engine.messages.miraRemoveFakeMessage(id: record.id).start()
             })
         ])
@@ -365,7 +367,11 @@ public func miraFakeMessagesController(context: AccountContext, peerId: PeerId) 
                 if record.outgoing {
                     direction = "From you"
                 } else if let authorName = record.authorName, !authorName.isEmpty {
-                    direction = "From \(authorName)"
+                    if record.authorPeerId != nil {
+                        direction = "From \(authorName)"
+                    } else {
+                        direction = "Local label: \(authorName)"
+                    }
                 } else {
                     direction = "From chat"
                 }
