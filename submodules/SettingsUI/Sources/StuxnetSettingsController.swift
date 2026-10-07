@@ -100,7 +100,7 @@ private func stuxnetControllerArguments(context: AccountContext, pushController:
 private func stuxnetItemListController<Entry: ItemListNodeEntry>(context: AccountContext, title: String, arguments: StuxnetControllerArguments, entries: @escaping (MiraSettings) -> [Entry]) -> ViewController {
     let signal = combineLatest(context.sharedContext.presentationData, miraSettingsSignal(accountManager: context.sharedContext.accountManager))
     |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
-        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries(settings), style: .blocks)
 
         return (controllerState, (listState, arguments))
@@ -174,7 +174,7 @@ private func stuxnetOptionsPickerController<T: Equatable>(context: AccountContex
             entries.append(.footer(footer))
         }
 
-        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
 
         return (controllerState, (listState, arguments))
