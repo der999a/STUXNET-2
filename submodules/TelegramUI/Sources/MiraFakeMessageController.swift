@@ -282,7 +282,7 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, MiraFakeMessageControllerArguments)) in
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Add Fake Message"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: .regular, enabled: true, action: {
             resolveSenderAndAdd()
-        }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+        }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
 
         var entries: [MiraFakeMessageEntry] = []
         entries.append(.input(state.text))
@@ -469,7 +469,8 @@ public func miraFakeMessagesController(context: AccountContext, peerId: PeerId) 
             rightNavigationButton: ItemListNavigationButton(content: .icon(.add), style: .regular, enabled: true, action: {
                 arguments.add()
             }),
-            backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)
+            backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back),
+            animateChanges: true
         )
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
         return (controllerState, (listState, arguments))
