@@ -806,7 +806,7 @@ private func stuxnetFakeGiftPickerController(context: AccountContext, currentGif
             entries.append(.empty("No cached gifts available. Add a gift while online, then it will remain available here offline."))
         }
 
-        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Select Gift"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Select Gift"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
 
         return (controllerState, (listState, arguments))
@@ -904,7 +904,7 @@ private func stuxnetFakeGiftDatePickerController(context: AccountContext, curren
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Gift Date"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text("Done"), style: .bold, enabled: true, action: {
             applyCustom()
             dismissImpl?()
-        }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+        }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
 
         return (controllerState, (listState, arguments))
