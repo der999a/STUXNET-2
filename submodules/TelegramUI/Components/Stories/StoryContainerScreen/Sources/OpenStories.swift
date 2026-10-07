@@ -175,6 +175,51 @@ public extension StoryContainerScreen {
         setProgress: @escaping (Signal<Never, NoError>) -> Void,
         completion: @escaping (StoryContainerScreen) -> Void = { _ in }
     ) {
+        let miraSettings = context.sharedContext.immediateMiraSettings
+        if miraSettings.suggestGhostBeforeStory && !miraSettings.ghostSettings(forPeerId: nil).isGhostActive {
+            let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+            parentController.present(textAlertController(context: context, title: nil, text: "Open stories in Ghost Mode? Your view will not be reported.", actions: [
+                TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+                TextAlertAction(type: .genericAction, title: "Open Normally", action: {
+                    openPeerStoriesCustomConfirmed(
+                        context: context,
+                        peerId: peerId,
+                        focusOnId: focusOnId,
+                        isHidden: isHidden,
+                        initialOrder: initialOrder,
+                        singlePeer: singlePeer,
+                        parentController: parentController,
+                        transitionIn: transitionIn,
+                        transitionOut: transitionOut,
+                        setFocusedItem: setFocusedItem,
+                        setProgress: setProgress,
+                        completion: completion
+                    )
+                }),
+                TextAlertAction(type: .defaultAction, title: "Open in Ghost Mode", action: {
+                    let _ = updateMiraSettingsInteractively(accountManager: context.sharedContext.accountManager, { settings in
+                        var ghostSettings = settings.ghost["0"] ?? .defaultSettings
+                        ghostSettings.setGhostModeEnabled(true)
+                        settings.ghost["0"] = ghostSettings
+                    }).start()
+                    openPeerStoriesCustomConfirmed(
+                        context: context,
+                        peerId: peerId,
+                        focusOnId: focusOnId,
+                        isHidden: isHidden,
+                        initialOrder: initialOrder,
+                        singlePeer: singlePeer,
+                        parentController: parentController,
+                        transitionIn: transitionIn,
+                        transitionOut: transitionOut,
+                        setFocusedItem: setFocusedItem,
+                        setProgress: setProgress,
+                        completion: completion
+                    )
+                })
+            ]), in: .window(.root))
+            return
+        }
         if context.sharedContext.immediateMiraSettings.confirmViewStory {
             let presentationData = context.sharedContext.currentPresentationData.with { $0 }
             parentController.present(textAlertController(context: context, title: nil, text: "Open stories?", actions: [

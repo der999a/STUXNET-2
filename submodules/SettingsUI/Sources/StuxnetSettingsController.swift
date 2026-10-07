@@ -348,6 +348,7 @@ private enum StuxnetGhostEntry: ItemListNodeEntry {
     case useScheduledMessages(Bool)
     case scheduledDelay(String)
     case sendWithoutSound(String)
+    case suggestGhostBeforeStory(Bool)
 
     case ghostInfo(String)
 
@@ -359,7 +360,7 @@ private enum StuxnetGhostEntry: ItemListNodeEntry {
             return StuxnetGhostSection.packets.rawValue
         case .locksHeader, .sendReadMessagesLocked, .sendReadStoriesLocked, .sendOnlinePacketsLocked, .sendUploadProgressLocked, .sendOfflinePacketAfterOnlineLocked, .locksInfo:
             return StuxnetGhostSection.locks.rawValue
-        case .actionsHeader, .markReadAfterAction, .useScheduledMessages, .scheduledDelay, .sendWithoutSound:
+        case .actionsHeader, .markReadAfterAction, .useScheduledMessages, .scheduledDelay, .sendWithoutSound, .suggestGhostBeforeStory:
             return StuxnetGhostSection.actions.rawValue
         case .ghostInfo:
             return StuxnetGhostSection.info.rawValue
@@ -406,8 +407,10 @@ private enum StuxnetGhostEntry: ItemListNodeEntry {
             return 17
         case .sendWithoutSound:
             return 18
-        case .ghostInfo:
+        case .suggestGhostBeforeStory:
             return 19
+        case .ghostInfo:
+            return 20
         }
     }
 
@@ -535,6 +538,12 @@ private enum StuxnetGhostEntry: ItemListNodeEntry {
                     settings.ghost["0"] = ghostSettings
                 }))
             })
+        case let .suggestGhostBeforeStory(value):
+            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "Suggest Ghost Mode Before Viewing Stories", value: value, sectionId: self.section, style: .blocks, updated: { value in
+                arguments.updateGhostSettings { ghostSettings in
+                    ghostSettings.suggestGhostBeforeStory = value
+                }
+            })
         case let .ghostInfo(text):
             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         }
@@ -568,6 +577,7 @@ private func stuxnetGhostEntries(settings: MiraSettings) -> [StuxnetGhostEntry] 
     entries.append(.useScheduledMessages(ghostSettings.useScheduledMessages))
     entries.append(.scheduledDelay("\(ghostSettings.scheduledDelaySeconds) sec"))
     entries.append(.sendWithoutSound(stuxnetSendWithoutSoundString(ghostSettings.sendWithoutSound)))
+    entries.append(.suggestGhostBeforeStory(ghostSettings.suggestGhostBeforeStory))
 
     entries.append(.ghostInfo("Ghost Mode blocks all outgoing read confirmations, story views, online status and typing/upload progress packets."))
 
