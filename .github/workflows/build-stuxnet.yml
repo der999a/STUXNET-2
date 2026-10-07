@@ -46,6 +46,10 @@ env:
   CODESIGNING_INFO_PATH: build-system/fake-codesigning
   # Bazel disk-cache directory consumed by Make.py --cacheDir (cached across runs).
   BAZEL_CACHE_DIR: ${{ github.workspace }}/../telegram-bazel-cache
+  # Keep Bazel's output base (analysis/action cache and fetched repositories) on a
+  # stable path. The source tree is copied to /Users/Shared/telegram-ios below,
+  # so the execroot symlinks remain valid when this directory is restored by CI.
+  BAZEL_USER_ROOT: ${{ github.workspace }}/../telegram-bazel-user-root
   # Canonical source location, mirroring the repo's own .github/workflows/build.yml:
   # source paths are embedded in the binary, so keep them stable across builds.
   SOURCE_DIR: /Users/Shared/telegram-ios
@@ -103,6 +107,7 @@ jobs:
         with:
           path: |
             ${{ env.BAZEL_CACHE_DIR }}
+            ${{ env.BAZEL_USER_ROOT }}
             build-input
           key: ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-${{ github.run_id }}
           restore-keys: |
@@ -189,6 +194,7 @@ jobs:
           set -ex
           mkdir -p "$BAZEL_CACHE_DIR"
           python3 -u build-system/Make/Make.py \
+            --bazelUserRoot="$BAZEL_USER_ROOT" \
             --cacheDir="$BAZEL_CACHE_DIR" \
             $XCODE_OVERRIDE_FLAG \
             build \
@@ -240,5 +246,6 @@ jobs:
         with:
           path: |
             ${{ env.BAZEL_CACHE_DIR }}
+            ${{ env.BAZEL_USER_ROOT }}
             build-input
           key: ${{ runner.os }}-bazel-${{ hashFiles('versions.json') }}-${{ github.run_id }}
