@@ -44,12 +44,6 @@ env:
   # own CI used for unsigned builds.
   BUILD_CONFIGURATION_PATH: ${{ vars.STUXNET_BUILD_CONFIG || 'build-system/sideload-configuration.json' }}
   CODESIGNING_INFO_PATH: build-system/fake-codesigning
-  # Bazel disk-cache directory consumed by Make.py --cacheDir (cached across runs).
-  BAZEL_CACHE_DIR: ${{ runner.temp }}/telegram-bazel-cache
-  # Keep Bazel's output base (analysis/action cache and fetched repositories) on a
-  # stable path. The source tree is copied to /Users/Shared/telegram-ios below,
-  # so the execroot symlinks remain valid when this directory is restored by CI.
-  BAZEL_USER_ROOT: ${{ runner.temp }}/telegram-bazel-user-root
   # Canonical source location, mirroring the repo's own .github/workflows/build.yml:
   # source paths are embedded in the binary, so keep them stable across builds.
   SOURCE_DIR: /Users/Shared/telegram-ios
@@ -64,6 +58,11 @@ jobs:
         with:
           submodules: 'recursive' # see SUBMODULES CAVEAT above
           fetch-depth: 0 # full history needed for `git rev-list --count HEAD` build number
+
+      - name: Set runner cache paths
+        run: |
+          echo "BAZEL_CACHE_DIR=$RUNNER_TEMP/telegram-bazel-cache" >> "$GITHUB_ENV"
+          echo "BAZEL_USER_ROOT=$RUNNER_TEMP/telegram-bazel-user-root" >> "$GITHUB_ENV"
 
       - name: Select Xcode matching versions.json
         run: |
