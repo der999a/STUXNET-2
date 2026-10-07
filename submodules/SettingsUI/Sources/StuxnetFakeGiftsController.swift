@@ -37,7 +37,11 @@ private func stuxnetFakeGiftTitle(_ gift: MiraFakeGift) -> String {
 private func stuxnetFakeGiftDateString(_ timestamp: Int32) -> String {
     let formatter = DateFormatter()
     formatter.dateStyle = .medium
-    formatter.timeStyle = .short
+    // Telegram shows the exact time for gift entries when the detail is open.
+    // Keep seconds here as well so two gifts created in the same minute remain
+    // distinguishable while still following the device's locale and 12/24-hour
+    // preference.
+    formatter.timeStyle = .medium
     return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
 }
 
@@ -168,7 +172,7 @@ public func stuxnetFakeGiftsController(context: AccountContext) -> ViewControlle
 
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Fake Gifts"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .icon(.add), style: .regular, enabled: true, action: {
             arguments.addGift()
-        }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+        }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
 
         return (controllerState, (listState, arguments))
@@ -657,7 +661,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
 
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(existingGift != nil ? "Edit Fake Gift" : "Add Fake Gift"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text("Save"), style: .bold, enabled: canSave, action: {
             saveImpl()
-        }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+        }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
 
         return (controllerState, (listState, arguments))
