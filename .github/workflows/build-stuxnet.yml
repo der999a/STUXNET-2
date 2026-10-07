@@ -152,15 +152,29 @@ jobs:
             --buildNumber="$BUILD_NUMBER" \
             --outputBuildArtifactsPath=build/artifacts
 
-      - name: Package dSYMs
+      - name: Package artifacts (IPA + dSYMs)
         working-directory: ${{ env.SOURCE_DIR }}
         if: success()
         run: |
           set -ex
-          # --outputBuildArtifactsPath drops Telegram.ipa + DSYMs/ into build/artifacts
-          cd build/artifacts
-          zip -r Telegram.DSYMs.zip DSYMs 1>/dev/null
-          ls -la
+          # Stage everything into build/artifacts. --outputBuildArtifactsPath may only
+          # drop the IPA; dSYMs live in bazel-bin/Telegram/*.dSYM — collect from there.
+          mkdir -p build/artifacts
+          if [ ! -f build/artifacts/Telegram.ipa ]; then
+            cp -f bazel-bin/Telegram/Telegram.ipa build/artifacts/Telegram.ipa
+          fi
+          ls -la build/artifacts
+          # dSYMs are optional artifacts: zip them if any exist, never fail the job on this
+          if ls bazel-bin/Telegram/*.dSYM 1>/dev/null 2>&1; then
+            STAGE=$(mktemp -d)/DSYMs
+            OUT="$PWD/build/artifacts/Telegram.DSYMs.zip"
+            mkdir -p "$STAGE"
+            for d in bazel-bin/Telegram/*.dSYM; do
+              cp -R "$d" "$STAGE/"
+            done
+            (cd "$STAGE/.." && zip -q -r "$OUT" DSYMs) || true
+          fi
+          ls -la build/artifacts
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
