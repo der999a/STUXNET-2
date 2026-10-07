@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 import Display
 import SwiftSignalKit
+import Postbox
 import TelegramCore
 import TelegramPresentationData
 import AccountContext
@@ -130,7 +131,7 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
     })
 
     let signal = combineLatest(context.sharedContext.presentationData, versionPromise.get())
-    |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+    |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, MiraFakeMessageControllerArguments)) in
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Add Fake Message"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: .regular, enabled: true, action: {
             let text = state.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {

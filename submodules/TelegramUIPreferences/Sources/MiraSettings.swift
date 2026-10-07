@@ -170,6 +170,8 @@ public struct MiraSettings: Codable, Equatable {
     public var confirmSendSticker: Bool
     public var confirmSendGif: Bool
     public var confirmSendVoice: Bool
+    public var interfaceFont: Int32
+    public var avatarCornerStyle: Int32
     
     public static var defaultSettings: MiraSettings {
         return MiraSettings()
@@ -215,7 +217,9 @@ public struct MiraSettings: Codable, Equatable {
         confirmCall: Bool = false,
         confirmSendSticker: Bool = false,
         confirmSendGif: Bool = false,
-        confirmSendVoice: Bool = false
+        confirmSendVoice: Bool = false,
+        interfaceFont: Int32 = 0,
+        avatarCornerStyle: Int32 = 0
     ) {
         self.ghost = ghost
         self.useGlobalGhostMode = useGlobalGhostMode
@@ -257,6 +261,8 @@ public struct MiraSettings: Codable, Equatable {
         self.confirmSendSticker = confirmSendSticker
         self.confirmSendGif = confirmSendGif
         self.confirmSendVoice = confirmSendVoice
+        self.interfaceFont = interfaceFont
+        self.avatarCornerStyle = avatarCornerStyle
     }
     
     public func ghostSettings(forPeerId peerId: EnginePeer.Id?) -> MiraGhostSettings {
@@ -313,6 +319,8 @@ public struct MiraSettings: Codable, Equatable {
         self.confirmSendSticker = try container.decodeIfPresent(Bool.self, forKey: "confirmSendSticker") ?? false
         self.confirmSendGif = try container.decodeIfPresent(Bool.self, forKey: "confirmSendGif") ?? false
         self.confirmSendVoice = try container.decodeIfPresent(Bool.self, forKey: "confirmSendVoice") ?? false
+        self.interfaceFont = try container.decodeIfPresent(Int32.self, forKey: "interfaceFont") ?? 0
+        self.avatarCornerStyle = try container.decodeIfPresent(Int32.self, forKey: "avatarCornerStyle") ?? 0
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -358,6 +366,8 @@ public struct MiraSettings: Codable, Equatable {
         try container.encode(self.confirmSendSticker, forKey: "confirmSendSticker")
         try container.encode(self.confirmSendGif, forKey: "confirmSendGif")
         try container.encode(self.confirmSendVoice, forKey: "confirmSendVoice")
+        try container.encode(self.interfaceFont, forKey: "interfaceFont")
+        try container.encode(self.avatarCornerStyle, forKey: "avatarCornerStyle")
     }
 }
 

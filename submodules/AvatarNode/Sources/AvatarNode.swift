@@ -315,6 +315,36 @@ public final class AvatarNode: ASDisplayNode {
         context.addPath(transformedPath)
     }
     
+    // Stuxnet: avatar corner override. 0 = default (circle), 1 = rounded square, 2 = square.
+    // Assign from the main queue only (wired to the miraSettings subscription in
+    // SharedAccountContext.swift). Already-rendered/cached avatar images are not
+    // invalidated; existing avatars pick up the new style on their next render.
+    public static var miraCornerStyle: Int32 = 0
+    
+    static func miraAddRoundClipPath(context: CGContext, rect: CGRect) {
+        switch AvatarNode.miraCornerStyle {
+        case 1:
+            context.addPath(UIBezierPath(roundedRect: rect, cornerRadius: floor(rect.width * 0.22)).cgPath)
+        case 2:
+            context.addRect(rect)
+        default:
+            context.addEllipse(in: rect)
+        }
+    }
+    
+    static func miraFillRound(context: CGContext, rect: CGRect) {
+        switch AvatarNode.miraCornerStyle {
+        case 1:
+            context.beginPath()
+            context.addPath(UIBezierPath(roundedRect: rect, cornerRadius: floor(rect.width * 0.22)).cgPath)
+            context.fillPath()
+        case 2:
+            context.fill(rect)
+        default:
+            context.fillEllipse(in: rect)
+        }
+    }
+    
     public static let gradientColors: [[UIColor]] = [
         [UIColor(rgb: 0xff516a), UIColor(rgb: 0xff885e)],
         [UIColor(rgb: 0xffa85c), UIColor(rgb: 0xffcd6a)],
@@ -734,7 +764,14 @@ public final class AvatarNode: ASDisplayNode {
                 self.imageNode.cornerRadius = 0.0
             case .round:
                 self.imageNode.clipsToBounds = true
-                self.imageNode.cornerRadius = displayDimensions.height * 0.5
+                switch AvatarNode.miraCornerStyle {
+                case 1:
+                    self.imageNode.cornerRadius = floor(displayDimensions.height * 0.22)
+                case 2:
+                    self.imageNode.cornerRadius = 0.0
+                default:
+                    self.imageNode.cornerRadius = displayDimensions.height * 0.5
+                }
             case .roundedRect:
                 self.imageNode.clipsToBounds = true
                 self.imageNode.cornerRadius = displayDimensions.height * 0.25
@@ -966,7 +1003,7 @@ public final class AvatarNode: ASDisplayNode {
                 
                 if case .round = parameters.clipStyle {
                     context.beginPath()
-                    context.addEllipse(in: CGRect(x: 0.0, y: 0.0, width: bounds.size.width, height:
+                    AvatarNode.miraAddRoundClipPath(context: context, rect: CGRect(x: 0.0, y: 0.0, width: bounds.size.width, height:
                         bounds.size.height))
                     context.clip()
                 } else if case .roundedRect = parameters.clipStyle {

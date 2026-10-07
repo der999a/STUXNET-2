@@ -77,6 +77,7 @@ import GiftOptionsScreen
 import GiftViewScreen
 import StarsIntroScreen
 import ContentReportScreen
+import AvatarNode
 import AffiliateProgramSetupScreen
 import GalleryUI
 import ShareController
@@ -141,6 +142,41 @@ private enum AddedAccountsResult {
 }
 
 private var testHasInstance = false
+
+private func stuxnetInterfaceFontFamily(_ id: Int32) -> String? {
+    switch id {
+    case 1:
+        return "Avenir Next"
+    case 2:
+        return "Futura"
+    case 3:
+        return "Georgia"
+    case 4:
+        return "Helvetica Neue"
+    case 5:
+        return "Times New Roman"
+    case 6:
+        return "Courier New"
+    case 7:
+        return "Menlo"
+    case 8:
+        return "Chalkboard SE"
+    case 9:
+        return "Copperplate"
+    case 10:
+        return "Didot"
+    case 11:
+        return "American Typewriter"
+    case 12:
+        return "Optima"
+    case 13:
+        return "Trebuchet MS"
+    case 14:
+        return "Verdana"
+    default:
+        return nil
+    }
+}
 
 public final class SharedAccountContextImpl: SharedAccountContext {
     public let mainWindow: Window1?
@@ -566,6 +602,9 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                 gateSnapshot.voiceChangerEnabled = settings.voiceChangerEnabled
                 gateSnapshot.voiceChangerPreset = settings.voiceChangerPreset
                 MiraCoreGate.shared.apply(gateSnapshot)
+                
+                Font.miraOverrideFontFamily = stuxnetInterfaceFontFamily(settings.interfaceFont)
+                AvatarNode.miraCornerStyle = settings.avatarCornerStyle
             }
         })
         

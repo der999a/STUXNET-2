@@ -1209,6 +1209,52 @@ private func stuxnetVoiceChangerSettingsController(context: AccountContext) -> V
     return controller
 }
 
+private func stuxnetInterfaceFontOptionName(_ id: Int32) -> String {
+    switch id {
+    case 1:
+        return "Avenir Next"
+    case 2:
+        return "Futura"
+    case 3:
+        return "Georgia"
+    case 4:
+        return "Helvetica Neue"
+    case 5:
+        return "Times New Roman"
+    case 6:
+        return "Courier New"
+    case 7:
+        return "Menlo"
+    case 8:
+        return "Chalkboard SE"
+    case 9:
+        return "Copperplate"
+    case 10:
+        return "Didot"
+    case 11:
+        return "American Typewriter"
+    case 12:
+        return "Optima"
+    case 13:
+        return "Trebuchet MS"
+    case 14:
+        return "Verdana"
+    default:
+        return "System"
+    }
+}
+
+private func stuxnetAvatarCornerStyleName(_ id: Int32) -> String {
+    switch id {
+    case 1:
+        return "Rounded Square"
+    case 2:
+        return "Square"
+    default:
+        return "Default"
+    }
+}
+
 // MARK: - Appearance & Misc
 
 private enum StuxnetAppearanceEntry: ItemListNodeEntry {
@@ -1217,6 +1263,8 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
     case showMessageSeconds(Bool)
     case compactChatList(Bool)
     case compactChatFolders(Bool)
+    case interfaceFont(String)
+    case avatarCorners(String)
 
     var section: ItemListSectionId {
         return 0
@@ -1234,6 +1282,10 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
             return 3
         case .compactChatFolders:
             return 4
+        case .interfaceFont:
+            return 5
+        case .avatarCorners:
+            return 6
         }
     }
 
@@ -1274,6 +1326,22 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
                     settings.compactChatFolders = value
                 }
             })
+        case let .interfaceFont(label):
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Interface Font", label: label, sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetOptionsPickerController(context: arguments.context, title: "Interface Font", options: (0 ... 14).map { (Int64($0), stuxnetInterfaceFontOptionName(Int32($0))) }, currentValue: { settings in
+                    return Int64(settings.interfaceFont)
+                }, updateValue: { settings, value in
+                    settings.interfaceFont = Int32(value)
+                }))
+            })
+        case let .avatarCorners(label):
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Avatar Corners", label: label, sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetOptionsPickerController(context: arguments.context, title: "Avatar Corners", options: (0 ... 2).map { (Int64($0), stuxnetAvatarCornerStyleName(Int32($0))) }, currentValue: { settings in
+                    return Int64(settings.avatarCornerStyle)
+                }, updateValue: { settings, value in
+                    settings.avatarCornerStyle = Int32(value)
+                }))
+            })
         }
     }
 }
@@ -1285,6 +1353,8 @@ private func stuxnetAppearanceEntries(settings: MiraSettings) -> [StuxnetAppeara
     entries.append(.showMessageSeconds(settings.showMessageSeconds))
     entries.append(.compactChatList(settings.compactChatList))
     entries.append(.compactChatFolders(settings.compactChatFolders))
+    entries.append(.interfaceFont(stuxnetInterfaceFontOptionName(settings.interfaceFont)))
+    entries.append(.avatarCorners(stuxnetAvatarCornerStyleName(settings.avatarCornerStyle)))
     return entries
 }
 

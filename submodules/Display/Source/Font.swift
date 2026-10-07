@@ -158,6 +158,65 @@ public struct Font {
 
     private static let cache = Cache()
     
+    // Stuxnet: interface font override (family name, e.g. "Avenir Next"). Assign from the
+    // main queue only; wired to the miraSettings subscription in SharedAccountContext.swift.
+    public static var miraOverrideFontFamily: String? = nil {
+        didSet {
+            if let family = self.miraOverrideFontFamily {
+                self.miraOverrideFontNames = Font.miraResolveFontNames(family: family)
+            } else {
+                self.miraOverrideFontNames = [:]
+            }
+        }
+    }
+    
+    private static var miraOverrideFontNames: [String: String] = [:]
+    
+    private static func miraResolveFontNames(family: String) -> [String: String] {
+        let names = UIFont.fontNames(forFamilyName: family)
+        guard !names.isEmpty else {
+            return [:]
+        }
+        let lowered = names.map { $0.lowercased() }
+        func index(matching keywords: [String], excluding: [String] = [], italic: Bool = false) -> Int? {
+            for (index, name) in lowered.enumerated() {
+                let nameIsItalic = name.contains("italic") || name.contains("oblique")
+                if nameIsItalic != italic {
+                    continue
+                }
+                if excluding.contains(where: { name.contains($0) }) {
+                    continue
+                }
+                if keywords.contains(where: { name.contains($0) }) {
+                    return index
+                }
+            }
+            return nil
+        }
+        let weightKeywords = ["bold", "medium", "semibold", "demi", "light", "thin", "heavy", "black", "italic", "oblique"]
+        let baseIndex = index(matching: ["regular"]) ?? lowered.firstIndex(where: { name in
+            !weightKeywords.contains(where: { name.contains($0) })
+        }) ?? 0
+        var result: [String: String] = [:]
+        result["regular"] = names[baseIndex]
+        result["medium"] = index(matching: ["medium"]).map { names[$0] } ?? names[baseIndex]
+        result["semibold"] = (index(matching: ["semibold"]) ?? index(matching: ["demi"])).map { names[$0] } ?? result["medium"]
+        // "semibold" contains "bold" as a substring, so exclude it when resolving bold
+        result["bold"] = index(matching: ["bold"], excluding: ["semibold", "demi"]).map { names[$0] } ?? result["semibold"]
+        result["light"] = index(matching: ["light"]).map { names[$0] } ?? names[baseIndex]
+        result["heavy"] = (index(matching: ["heavy"]) ?? index(matching: ["black"])).map { names[$0] } ?? result["bold"]
+        result["italic"] = (index(matching: ["regular"], italic: true) ?? index(matching: [""], italic: true)).map { names[$0] } ?? names[baseIndex]
+        result["semiboldItalic"] = (index(matching: ["semibold"], italic: true) ?? index(matching: ["demi"], italic: true)).map { names[$0] } ?? result["italic"]
+        return result
+    }
+    
+    private static func miraFont(size: CGFloat, weightKey: String) -> UIFont? {
+        guard let name = self.miraOverrideFontNames[weightKey], let font = UIFont(name: name, size: size) else {
+            return nil
+        }
+        return font
+    }
+
     public static func with(size: CGFloat, design: Design = .regular, weight: Weight = .regular, width: Width = .standard, traits: Traits = []) -> UIFont {
         let key = "\(size)_\(design.key)_\(weight.key)_\(width.key)_\(traits.rawValue)"
         
@@ -279,18 +338,30 @@ public struct Font {
     }
     
     public static func regular(_ size: CGFloat) -> UIFont {
+        if let font = self.miraFont(size: size, weightKey: "regular") {
+            return font
+        }
         return UIFont.systemFont(ofSize: size)
     }
     
     public static func medium(_ size: CGFloat) -> UIFont {
+        if let font = self.miraFont(size: size, weightKey: "medium") {
+            return font
+        }
         return UIFont.systemFont(ofSize: size, weight: UIFont.Weight.medium)
     }
     
     public static func semibold(_ size: CGFloat) -> UIFont {
+        if let font = self.miraFont(size: size, weightKey: "semibold") {
+            return font
+        }
         return UIFont.systemFont(ofSize: size, weight: UIFont.Weight.semibold)
     }
     
     public static func bold(_ size: CGFloat) -> UIFont {
+        if let font = self.miraFont(size: size, weightKey: "bold") {
+            return font
+        }
         if #available(iOS 8.2, *) {
             return UIFont.boldSystemFont(ofSize: size)
         } else {
@@ -299,14 +370,23 @@ public struct Font {
     }
     
     public static func heavy(_ size: CGFloat) -> UIFont {
+        if let font = self.miraFont(size: size, weightKey: "heavy") {
+            return font
+        }
         return self.with(size: size, design: .regular, weight: .heavy, traits: [])
     }
     
     public static func light(_ size: CGFloat) -> UIFont {
+        if let font = self.miraFont(size: size, weightKey: "light") {
+            return font
+        }
         return UIFont.systemFont(ofSize: size, weight: UIFont.Weight.light)
     }
     
     public static func semiboldItalic(_ size: CGFloat) -> UIFont {
+        if let font = self.miraFont(size: size, weightKey: "semiboldItalic") {
+            return font
+        }
         if let descriptor = UIFont.systemFont(ofSize: size).fontDescriptor.withSymbolicTraits([.traitBold, .traitItalic]) {
             return UIFont(descriptor: descriptor, size: size)
         } else {
@@ -331,6 +411,9 @@ public struct Font {
     }
     
     public static func italic(_ size: CGFloat) -> UIFont {
+        if let font = self.miraFont(size: size, weightKey: "italic") {
+            return font
+        }
         return UIFont.italicSystemFont(ofSize: size)
     }
 }

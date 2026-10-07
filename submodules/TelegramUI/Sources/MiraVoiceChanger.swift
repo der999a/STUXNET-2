@@ -91,6 +91,9 @@ private struct MiraVoiceChangerEffectParams {
     var reverb: (preset: AVAudioUnitReverbPreset, wetDryMix: Float)?
     var tailSeconds: Double = 0.0
 
+    init() {
+    }
+
     var totalRate: Float {
         var rate: Float = 1.0
         for stage in self.pitchStages {

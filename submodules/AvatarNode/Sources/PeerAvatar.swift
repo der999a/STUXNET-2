@@ -201,8 +201,8 @@ public func peerAvatarImage(postbox: Postbox, peerReference: PeerReference?, aut
                             case .none:
                                 break
                             case .round:
-                                if displayDimensions.width != 60.0 {
-                                    context.addEllipse(in: CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
+                                if displayDimensions.width != 60.0 || AvatarNode.miraCornerStyle != 0 {
+                                    AvatarNode.miraAddRoundClipPath(context: context, rect: CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
                                     context.clip()
                                 }
                             case .roundedRect:
@@ -263,7 +263,7 @@ public func peerAvatarImage(postbox: Postbox, peerReference: PeerReference?, aut
                             case .none:
                                 break
                             case .round:
-                                if displayDimensions.width == 60.0 {
+                                if displayDimensions.width == 60.0 && AvatarNode.miraCornerStyle == 0 {
                                     context.setBlendMode(.destinationOut)
                                     context.draw(roundCorners.cgImage!, in: CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
                                 }
@@ -280,7 +280,7 @@ public func peerAvatarImage(postbox: Postbox, peerReference: PeerReference?, aut
                                 case .none:
                                     context.fill(CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
                                 case .round:
-                                    context.fillEllipse(in: CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
+                                    AvatarNode.miraFillRound(context: context, rect: CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
                                 case .roundedRect:
                                     context.beginPath()
                                     context.addPath(UIBezierPath(roundedRect: CGRect(x: 0.0, y: 0.0, width: displayDimensions.width, height: displayDimensions.height).insetBy(dx: inset, dy: inset), cornerRadius: floor(displayDimensions.width * 0.25)).cgPath)
@@ -306,7 +306,7 @@ public func peerAvatarImage(postbox: Postbox, peerReference: PeerReference?, aut
                         case .none:
                             context.fill(CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
                         case .round:
-                            context.fillEllipse(in: CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
+                            AvatarNode.miraFillRound(context: context, rect: CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
                         case .roundedRect:
                             context.beginPath()
                             context.addPath(UIBezierPath(roundedRect: CGRect(x: 0.0, y: 0.0, width: displayDimensions.width, height: displayDimensions.height).insetBy(dx: inset, dy: inset), cornerRadius: floor(displayDimensions.width * 0.25)).cgPath)
@@ -354,7 +354,7 @@ public func peerAvatarImage(postbox: Postbox, peerReference: PeerReference?, aut
                             case .none:
                                 context.fill(CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
                             case .round:
-                                context.fillEllipse(in: CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
+                                AvatarNode.miraFillRound(context: context, rect: CGRect(origin: CGPoint(), size: displayDimensions).insetBy(dx: inset, dy: inset))
                             case .roundedRect:
                                 context.beginPath()
                                 context.addPath(UIBezierPath(roundedRect: CGRect(x: 0.0, y: 0.0, width: displayDimensions.width, height: displayDimensions.height).insetBy(dx: inset, dy: inset), cornerRadius: floor(displayDimensions.width * 0.25)).cgPath)
@@ -395,7 +395,7 @@ public func peerAvatarImage(postbox: Postbox, peerReference: PeerReference?, aut
 public func drawPeerAvatarLetters(context: CGContext, size: CGSize, round: Bool = true, font: UIFont, letters: [String], peerId: EnginePeer.Id, nameColor: PeerColor?) {
     if round {
         context.beginPath()
-        context.addEllipse(in: CGRect(x: 0.0, y: 0.0, width: size.width, height:
+        AvatarNode.miraAddRoundClipPath(context: context, rect: CGRect(x: 0.0, y: 0.0, width: size.width, height:
             size.height))
         context.clip()
     }

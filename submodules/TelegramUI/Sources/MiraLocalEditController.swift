@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 import Display
 import SwiftSignalKit
+import Postbox
 import TelegramCore
 import TelegramPresentationData
 import AccountContext
@@ -69,7 +70,7 @@ public func miraLocalEditController(context: AccountContext, messageId: MessageI
     var dismissImpl: (() -> Void)?
 
     let signal = context.sharedContext.presentationData
-    |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
+    |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, MiraLocalEditControllerArguments)) in
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Edit locally"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: .regular, enabled: true, action: {
             if state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let _ = context.engine.messages.miraRemoveLocalMessageOverride(messageId: messageId).start()
