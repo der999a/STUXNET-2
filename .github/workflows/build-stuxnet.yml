@@ -45,11 +45,11 @@ env:
   BUILD_CONFIGURATION_PATH: ${{ vars.STUXNET_BUILD_CONFIG || 'build-system/sideload-configuration.json' }}
   CODESIGNING_INFO_PATH: build-system/fake-codesigning
   # Bazel disk-cache directory consumed by Make.py --cacheDir (cached across runs).
-  BAZEL_CACHE_DIR: ${{ github.workspace }}/../telegram-bazel-cache
+  BAZEL_CACHE_DIR: ${{ runner.temp }}/telegram-bazel-cache
   # Keep Bazel's output base (analysis/action cache and fetched repositories) on a
   # stable path. The source tree is copied to /Users/Shared/telegram-ios below,
   # so the execroot symlinks remain valid when this directory is restored by CI.
-  BAZEL_USER_ROOT: ${{ github.workspace }}/../telegram-bazel-user-root
+  BAZEL_USER_ROOT: ${{ runner.temp }}/telegram-bazel-user-root
   # Canonical source location, mirroring the repo's own .github/workflows/build.yml:
   # source paths are embedded in the binary, so keep them stable across builds.
   SOURCE_DIR: /Users/Shared/telegram-ios
