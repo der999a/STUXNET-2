@@ -1,5 +1,6 @@
 import Foundation
 import SwiftSignalKit
+import Postbox
 
 public struct MiraCoreGateSnapshot: Equatable {
     public var sendReadMessages: Bool = true
@@ -32,6 +33,7 @@ public final class MiraCoreGate {
     public static let shared = MiraCoreGate()
     
     private let value = Atomic<MiraCoreGateSnapshot>(value: MiraCoreGateSnapshot())
+    private let accountValues = Atomic<[PeerId: MiraCoreGateSnapshot]>(value: [:])
     
     public var snapshot: MiraCoreGateSnapshot {
         return self.value.with { $0 }
@@ -39,6 +41,27 @@ public final class MiraCoreGate {
     
     public func apply(_ snapshot: MiraCoreGateSnapshot) {
         let _ = self.value.swap(snapshot)
+    }
+
+    /// Applies a snapshot for one Telegram account. The legacy global snapshot
+    /// remains the fallback for accounts without an override.
+    public func apply(_ snapshot: MiraCoreGateSnapshot, forAccountPeerId accountPeerId: PeerId) {
+        let _ = self.accountValues.modify { values in
+            var values = values
+            values[accountPeerId] = snapshot
+            return values
+        }
+    }
+
+    /// Resolves the effective snapshot for an account without changing the
+    /// process-wide legacy snapshot used by older call sites.
+    public func snapshot(forAccountPeerId accountPeerId: PeerId?) -> MiraCoreGateSnapshot {
+        guard let accountPeerId = accountPeerId else {
+            return self.snapshot
+        }
+        return self.accountValues.with { values in
+            return values[accountPeerId] ?? self.snapshot
+        }
     }
     
     public var sendReadMessages: Bool {

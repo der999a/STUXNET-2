@@ -4441,13 +4441,13 @@ func replayFinalState(
                 }
             case let .DeleteMessagesWithGlobalIds(ids):
                 var resourceIds: [MediaResourceId] = []
-                if MiraCoreGate.shared.saveDeletedMessages {
+                if MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).saveDeletedMessages {
                     var messageIdsToDelete: [MessageId] = []
                     var messageIdsToMark: [MessageId] = []
                     var deletedGlobalIds: [Int32] = []
                     for globalId in ids {
                         let messageId = transaction.messageIdsForGlobalIds([globalId]).first
-                        if let messageId = messageId, let message = transaction.getMessage(messageId), miraIsSavableDeletedMessage(transaction: transaction, message: message) {
+                        if let messageId = messageId, let message = transaction.getMessage(messageId), miraIsSavableDeletedMessage(transaction: transaction, message: message, accountPeerId: accountPeerId) {
                             messageIdsToMark.append(messageId)
                         } else {
                             if let messageId = messageId {
@@ -4473,7 +4473,7 @@ func replayFinalState(
                     let _ = mediaBox.removeCachedResources(Array(Set(resourceIds)), force: true).start()
                 }
             case let .DeleteMessages(ids):
-                let partition = miraPartitionDeletedMessages(transaction: transaction, ids: ids)
+                let partition = miraPartitionDeletedMessages(transaction: transaction, ids: ids, accountPeerId: accountPeerId)
                 if !partition.delete.isEmpty {
                     _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: partition.delete, manualAddMessageThreadStatsDifference: { id, add, remove in
                         addMessageThreadStatsDifference(threadKey: id, remove: remove, addedMessagePeer: nil, addedMessageId: nil, isOutgoing: false)

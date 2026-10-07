@@ -1847,17 +1847,38 @@ public final class PeerInfoStoryPaneNode: ASDisplayNode, PeerInfoPaneNode, ASScr
             return strongSelf.loadHole(anchor: hole, at: location)
         }
 
+        var isReplayingConfirmedStoryTap = false
         self.itemGridBinding.onTapImpl = { [weak self] item, itemLayer, point in
             guard let self else {
                 return
             }
+
+            if !isReplayingConfirmedStoryTap {
+                if case let .peer(_, _, isArchived) = self.scope, isArchived, self.context.sharedContext.immediateMiraSettings.confirmViewStory {
+                    guard let parentController = self.parentController else {
+                        return
+                    }
+                    let presentationData = self.context.sharedContext.currentPresentationData.with { $0 }
+                    isReplayingConfirmedStoryTap = true
+                    parentController.present(textAlertController(context: self.context, title: nil, text: presentationData.strings.StoryList_TitleArchive, actions: [
+                        TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {
+                            isReplayingConfirmedStoryTap = false
+                        }),
+                        TextAlertAction(type: .defaultAction, title: presentationData.strings.Chat_OpenStory, action: { [weak self] in
+                            self?.itemGridBinding.onTapImpl?(item, itemLayer, point)
+                            isReplayingConfirmedStoryTap = false
+                        })
+                    ], dismissOnOutsideTap: false), in: .window(.root))
+                    return
+                }
+            }
             
-            if self.isProfileEmbedded || !self.shouldOpenItemsWhileInSelectionMode {
+            if !isReplayingConfirmedStoryTap && (self.isProfileEmbedded || !self.shouldOpenItemsWhileInSelectionMode) {
                 if let selectedIds = self.itemInteraction.selectedIds {
                     self.itemInteraction.toggleSelection(item.story.id, !selectedIds.contains(item.story.id))
                     return
                 }
-            } else {
+            } else if !isReplayingConfirmedStoryTap {
                 if let selectedIds = self.itemInteraction.selectedIds, let itemLayer = itemLayer as? ItemLayer, let selectionLayer = itemLayer.selectionLayer {
                     if selectionLayer.checkLayer.frame.insetBy(dx: -4.0, dy: -4.0).contains(point) {
                         self.itemInteraction.toggleSelection(item.story.id, !selectedIds.contains(item.story.id))

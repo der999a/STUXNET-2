@@ -37,7 +37,7 @@ private final class ManagedAutoremoveMessageOperationsHelper {
     }
 }
 
-func managedAutoremoveMessageOperations(network: Network, postbox: Postbox, isRemove: Bool) -> Signal<Void, NoError> {
+func managedAutoremoveMessageOperations(network: Network, postbox: Postbox, isRemove: Bool, accountPeerId: PeerId? = nil) -> Signal<Void, NoError> {
     return Signal { _ in
         let helper = Atomic(value: ManagedAutoremoveMessageOperationsHelper())
         
@@ -83,7 +83,7 @@ func managedAutoremoveMessageOperations(network: Network, postbox: Postbox, isRe
 
                     if let message = transaction.getMessage(entry.messageId) {
                         if message.id.peerId.namespace == Namespaces.Peer.SecretChat || isRemove {
-                            if isRemove, message.id.peerId.namespace != Namespaces.Peer.SecretChat, MiraCoreGate.shared.saveDeletedMessages, miraIsSavableDeletedMessage(transaction: transaction, message: message) {
+                            if isRemove, message.id.peerId.namespace != Namespaces.Peer.SecretChat, MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).saveDeletedMessages, miraIsSavableDeletedMessage(transaction: transaction, message: message, accountPeerId: accountPeerId) {
                                 miraMarkMessagesAsLocallyDeleted(transaction: transaction, ids: [entry.messageId], additionalAttributeUpdates: { attributes in
                                     attributes.removeAll(where: { $0 is AutoremoveTimeoutMessageAttribute })
                                 })

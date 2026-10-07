@@ -1126,7 +1126,8 @@ public final class OngoingCallContext {
                 )
                 
                 strongSelf.contextRef = Unmanaged.passRetained(OngoingCallThreadLocalContextHolder(context))
-                SharedCallAudioDevice.setVoiceChangerPreset(MiraCoreGate.shared.voiceChangerEnabled ? MiraCoreGate.shared.voiceChangerPreset : 0)
+                let miraGate = MiraCoreGate.shared.snapshot(forAccountPeerId: strongSelf.account.peerId)
+                SharedCallAudioDevice.setVoiceChangerPreset(miraGate.voiceChangerEnabled ? miraGate.voiceChangerPreset : 0)
                 context.stateChanged = { [weak callSessionManager] state, videoState, remoteVideoState, remoteAudioState, remoteBatteryLevel, _ in
                     queue.async {
                         guard let strongSelf = self else {

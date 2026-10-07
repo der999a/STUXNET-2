@@ -451,7 +451,7 @@ private class AdMessagesHistoryContextImpl {
 
         self.stateValue = State(interPostInterval: nil, messages: [])
 
-        if messageId == nil, !MiraCoreGate.shared.disableAds {
+        if messageId == nil, !MiraCoreGate.shared.snapshot(forAccountPeerId: account.peerId).disableAds {
             self.state.set(CachedState.getCached(postbox: account.postbox, peerId: peerId)
             |> mapToSignal { cachedState -> Signal<State, NoError> in
                 if let cachedState = cachedState, cachedState.timestamp >= Int32(Date().timeIntervalSince1970) - 5 * 60 {
@@ -477,7 +477,7 @@ private class AdMessagesHistoryContextImpl {
     }
     
     func activate() {
-        if MiraCoreGate.shared.disableAds {
+        if MiraCoreGate.shared.snapshot(forAccountPeerId: self.account.peerId).disableAds {
             return
         }
         if self.isActivated {

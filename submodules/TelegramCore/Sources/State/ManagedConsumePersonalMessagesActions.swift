@@ -254,7 +254,7 @@ func managedReadReactionOrPollVoteActions(postbox: Postbox, network: Network, st
 private func synchronizeConsumeMessageContents(transaction: Transaction, postbox: Postbox, network: Network, stateManager: AccountStateManager, id: MessageId) -> Signal<Void, NoError> {
     if id.peerId.namespace == Namespaces.Peer.CloudUser || id.peerId.namespace == Namespaces.Peer.CloudGroup {
         let requestSignal: Signal<Api.messages.AffectedMessages?, NoError>
-        if MiraCoreGate.shared.sendReadMessages {
+        if MiraCoreGate.shared.snapshot(forAccountPeerId: stateManager.accountPeerId).sendReadMessages {
             requestSignal = network.request(Api.functions.messages.readMessageContents(id: [id.id]))
             |> map(Optional.init)
             |> `catch` { _ -> Signal<Api.messages.AffectedMessages?, NoError> in
@@ -295,7 +295,7 @@ private func synchronizeConsumeMessageContents(transaction: Transaction, postbox
     } else if id.peerId.namespace == Namespaces.Peer.CloudChannel {
         if let peer = transaction.getPeer(id.peerId), let inputChannel = apiInputChannel(peer) {
             let requestSignal: Signal<Api.Bool, NoError>
-            if MiraCoreGate.shared.sendReadMessages {
+            if MiraCoreGate.shared.snapshot(forAccountPeerId: stateManager.accountPeerId).sendReadMessages {
                 requestSignal = network.request(Api.functions.channels.readMessageContents(channel: inputChannel, id: [id.id]))
                 |> `catch` { _ -> Signal<Api.Bool, NoError> in
                     return .single(.boolFalse)

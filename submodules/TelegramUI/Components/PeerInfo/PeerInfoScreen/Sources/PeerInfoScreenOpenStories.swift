@@ -6,13 +6,19 @@ import StoryContainerScreen
 import SwiftSignalKit
 
 extension PeerInfoScreenNode {
-    func openStories(fromAvatar: Bool) {
+    func openStories(fromAvatar: Bool, confirmed: Bool = false) {
         guard let controller = self.controller else {
+            return
+        }
+        if !fromAvatar && !confirmed {
+            StoryContainerScreen.confirmStoryOpeningIfNeeded(context: self.context, parentController: controller, action: { [weak self] in
+                self?.openStories(fromAvatar: fromAvatar, confirmed: true)
+            })
             return
         }
         if let expiringStoryList = self.expiringStoryList, let expiringStoryListState = self.expiringStoryListState, !expiringStoryListState.items.isEmpty {
             if fromAvatar {
-                StoryContainerScreen.openPeerStories(context: self.context, peerId: self.peerId, parentController: controller, avatarNode: self.headerNode.avatarListNode.avatarContainerNode.avatarNode)
+                StoryContainerScreen.openPeerStories(context: self.context, peerId: self.peerId, parentController: controller, avatarNode: self.headerNode.avatarListNode.avatarContainerNode.avatarNode, skipStoryConfirmation: confirmed)
                 return
             }
             

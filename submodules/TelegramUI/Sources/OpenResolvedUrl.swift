@@ -1496,27 +1496,32 @@ func openResolvedUrlImpl(
                     return false
                 }
             }
-            |> deliverOnMainQueue).startStandalone(next: { exists in
+            |> deliverOnMainQueue).startStandalone(next: { [weak navigationController] exists in
                 if exists {
-                    let storyContent = SingleStoryContentContextImpl(context: context, storyId: StoryId(peerId: peerId, id: id), readGlobally: true)
-                    let _ = (storyContent.state
-                    |> take(1)
-                    |> deliverOnMainQueue).startStandalone(next: { [weak navigationController] _ in
-                        let transitionIn: StoryContainerScreen.TransitionIn? = nil
-                        
-                        let storyContainerScreen = StoryContainerScreen(
-                            context: context,
-                            content: storyContent,
-                            transitionIn: transitionIn,
-                            transitionOut: { _, _ in
-                                let transitionOut: StoryContainerScreen.TransitionOut? = nil
-                                
-                                return transitionOut
-                            }
-                        )
-                        navigationController?.pushViewController(storyContainerScreen)
-                        completion?()
-                    })
+                    guard let navigationController else {
+                        return
+                    }
+                    StoryContainerScreen.openPeerStoriesCustom(
+                        context: context,
+                        peerId: peerId,
+                        focusOnId: id,
+                        isHidden: false,
+                        singlePeer: true,
+                        parentController: navigationController,
+                        transitionIn: {
+                            return nil
+                        },
+                        transitionOut: { _ in
+                            return nil
+                        },
+                        setFocusedItem: { _ in
+                        },
+                        setProgress: { _ in
+                        },
+                        completion: { _ in
+                            completion?()
+                        }
+                    )
                 } else {
                     var elevatedLayout = true
                     if case .chat = urlContext {

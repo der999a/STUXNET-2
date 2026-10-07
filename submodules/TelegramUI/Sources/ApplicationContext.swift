@@ -865,7 +865,7 @@ final class AuthorizedApplicationContext {
             guard let strongSelf = self else {
                 return
             }
-            let _ = strongSelf.context.sharedContext.callManager?.requestCall(context: strongSelf.context, peerId: peerId, isVideo: isVideo, endCurrentIfAny: false)
+            strongSelf.context.requestCall(peerId: peerId, isVideo: isVideo, completion: {})
         }))
     }
     

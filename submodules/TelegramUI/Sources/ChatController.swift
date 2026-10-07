@@ -5554,6 +5554,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 return
             }
             
+            func openStory() {
             let storyContent = SingleStoryContentContextImpl(context: self.context, storyId: storyId, readGlobally: true)
             let _ = (storyContent.state
             |> take(1)
@@ -5649,6 +5650,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 )
                 self.push(storyContainerScreen)
             })
+            }
+            StoryContainerScreen.confirmStoryOpeningIfNeeded(context: self.context, parentController: self, action: openStory)
         }, attemptedNavigationToPrivateQuote: { [weak self] peer in
             guard let self else {
                 return
@@ -6349,7 +6352,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         self.accountPeerDisposable = (context.account.postbox.peerView(id: context.account.peerId)
         |> deliverOnMainQueue).startStrict(next: { [weak self] peerView in
             if let strongSelf = self {
-                let isPremium = (peerView.peers[peerView.peerId]?.isPremium ?? false) || strongSelf.context.sharedContext.immediateMiraSettings.localPremium
+                let isPremium = (peerView.peers[peerView.peerId]?.isPremium ?? false) || strongSelf.context.sharedContext.immediateMiraSettings.effectiveLocalPremium
                 strongSelf.updateChatPresentationInterfaceState(animated: false, interactive: false, { state in
                     return state.updatedIsPremium(isPremium)
                 })
@@ -9024,7 +9027,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                     UIPasteboard.general.items = []
                 }
                 
-                if !MiraCoreGate.shared.sendReadMessages && MiraCoreGate.shared.markReadAfterAction, case .peer = self.chatLocation {
+                let miraGate = MiraCoreGate.shared.snapshot(forAccountPeerId: self.context.account.peerId)
+                if !miraGate.sendReadMessages && miraGate.markReadAfterAction, case .peer = self.chatLocation {
                     let _ = (self.context.account.postbox.transaction { transaction -> MessageIndex? in
                         return transaction.getTopPeerMessageIndex(peerId: peerId)
                     }

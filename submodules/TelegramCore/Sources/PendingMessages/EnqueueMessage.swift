@@ -571,8 +571,9 @@ private func opportunisticallyTransformOutgoingMedia(network: Network, postbox: 
 
 public func enqueueMessages(account: Account, peerId: PeerId, messages: [EnqueueMessage]) -> Signal<[MessageId?], NoError> {
     var messages = messages
-    if MiraCoreGate.shared.useScheduledMessages && MiraCoreGate.shared.isGhostActive, peerId.namespace != Namespaces.Peer.SecretChat {
-        let scheduleTime = Int32(account.network.context.globalTime()) + MiraCoreGate.shared.scheduledDelaySeconds
+    let miraGate = MiraCoreGate.shared.snapshot(forAccountPeerId: account.peerId)
+    if miraGate.useScheduledMessages && miraGate.isGhostActive, peerId.namespace != Namespaces.Peer.SecretChat {
+        let scheduleTime = Int32(account.network.context.globalTime()) + miraGate.scheduledDelaySeconds
         messages = messages.map { message -> EnqueueMessage in
             guard case .message = message else {
                 return message

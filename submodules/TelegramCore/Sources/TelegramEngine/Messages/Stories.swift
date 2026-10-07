@@ -2072,7 +2072,7 @@ func _internal_deleteStories(account: Account, peerId: PeerId, ids: [Int32]) -> 
 
 func _internal_markStoryAsSeen(account: Account, peerId: PeerId, id: Int32, asPinned: Bool) -> Signal<Never, NoError> {
     if asPinned {
-        guard MiraCoreGate.shared.sendReadStories else {
+        guard MiraCoreGate.shared.snapshot(forAccountPeerId: account.peerId).sendReadStories else {
             return .complete()
         }
         return account.postbox.transaction { transaction -> Api.InputPeer? in

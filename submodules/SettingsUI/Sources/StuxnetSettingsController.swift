@@ -89,9 +89,9 @@ private func stuxnetControllerArguments(context: AccountContext, pushController:
         let _ = updateMiraSettingsInteractively(accountManager: accountManager, f).start()
     }, updateGhostSettings: { f in
         let _ = updateMiraSettingsInteractively(accountManager: accountManager, { settings in
-            var ghostSettings = settings.ghost["0"] ?? .defaultSettings
+            var ghostSettings = settings.ghostSettings(forAccountPeerId: context.account.peerId)
             f(&ghostSettings)
-            settings.ghost["0"] = ghostSettings
+            settings.setGhostSettings(ghostSettings, forAccountPeerId: context.account.peerId)
         }).start()
     }, pushController: pushController)
 }
@@ -267,6 +267,7 @@ private enum StuxnetHubEntry: ItemListNodeEntry {
                         arguments.updateSettings { settings in
                             settings = .defaultSettings
                         }
+                        arguments.context.account.miraFakeGiftsStore.clear()
                     }),
                     TextAlertAction(type: .genericAction, title: "Cancel", action: {
                     })
@@ -279,9 +280,9 @@ private enum StuxnetHubEntry: ItemListNodeEntry {
     }
 }
 
-private func stuxnetHubEntries(settings: MiraSettings) -> [StuxnetHubEntry] {
+private func stuxnetHubEntries(settings: MiraSettings, accountPeerId: PeerId) -> [StuxnetHubEntry] {
     var entries: [StuxnetHubEntry] = []
-    entries.append(.ghost(settings.ghostSettings(forPeerId: nil).isGhostActive))
+    entries.append(.ghost(settings.ghostSettings(forAccountPeerId: accountPeerId).isGhostActive))
     entries.append(.privacy)
     entries.append(.spy)
     entries.append(.fake)
@@ -304,7 +305,7 @@ public func stuxnetSettingsController(context: AccountContext) -> ViewController
     }
 
     let controller = stuxnetItemListController(context: context, title: "Stuxnet", arguments: arguments, entries: { settings in
-        return stuxnetHubEntries(settings: settings)
+        return stuxnetHubEntries(settings: settings, accountPeerId: context.account.peerId)
     })
     pushControllerImpl = { [weak controller] c in
         (controller?.navigationController as? NavigationController)?.pushViewController(c)
@@ -517,11 +518,11 @@ private enum StuxnetGhostEntry: ItemListNodeEntry {
                     (60, "60 sec"),
                     (120, "120 sec")
                 ], currentValue: { settings in
-                    return Int64(settings.ghostSettings(forPeerId: nil).scheduledDelaySeconds)
+                    return Int64(settings.ghostSettings(forAccountPeerId: arguments.context.account.peerId).scheduledDelaySeconds)
                 }, updateValue: { settings, value in
-                    var ghostSettings = settings.ghost["0"] ?? .defaultSettings
+                    var ghostSettings = settings.ghostSettings(forAccountPeerId: arguments.context.account.peerId)
                     ghostSettings.scheduledDelaySeconds = Int32(value)
-                    settings.ghost["0"] = ghostSettings
+                    settings.setGhostSettings(ghostSettings, forAccountPeerId: arguments.context.account.peerId)
                 }))
             })
         case let .sendWithoutSound(label):
@@ -531,11 +532,11 @@ private enum StuxnetGhostEntry: ItemListNodeEntry {
                     (1, "In Ghost Mode"),
                     (2, "Always")
                 ], currentValue: { settings in
-                    return Int64(settings.ghostSettings(forPeerId: nil).sendWithoutSound)
+                    return Int64(settings.ghostSettings(forAccountPeerId: arguments.context.account.peerId).sendWithoutSound)
                 }, updateValue: { settings, value in
-                    var ghostSettings = settings.ghost["0"] ?? .defaultSettings
+                    var ghostSettings = settings.ghostSettings(forAccountPeerId: arguments.context.account.peerId)
                     ghostSettings.sendWithoutSound = Int32(value)
-                    settings.ghost["0"] = ghostSettings
+                    settings.setGhostSettings(ghostSettings, forAccountPeerId: arguments.context.account.peerId)
                 }))
             })
         case let .suggestGhostBeforeStory(value):
@@ -550,10 +551,10 @@ private enum StuxnetGhostEntry: ItemListNodeEntry {
     }
 }
 
-private func stuxnetGhostEntries(settings: MiraSettings) -> [StuxnetGhostEntry] {
+private func stuxnetGhostEntries(settings: MiraSettings, accountPeerId: PeerId) -> [StuxnetGhostEntry] {
     var entries: [StuxnetGhostEntry] = []
 
-    let ghostSettings = settings.ghostSettings(forPeerId: nil)
+    let ghostSettings = settings.ghostSettings(forAccountPeerId: accountPeerId)
 
     entries.append(.master(ghostSettings.isGhostActive))
 
@@ -592,7 +593,7 @@ private func stuxnetGhostSettingsController(context: AccountContext) -> ViewCont
     })
 
     let controller = stuxnetItemListController(context: context, title: "Ghost Mode", arguments: arguments, entries: { settings in
-        return stuxnetGhostEntries(settings: settings)
+        return stuxnetGhostEntries(settings: settings, accountPeerId: context.account.peerId)
     })
     pushControllerImpl = { [weak controller] c in
         (controller?.navigationController as? NavigationController)?.pushViewController(c)
@@ -1322,6 +1323,7 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
     case showMessageSeconds(Bool)
     case compactChatList(Bool)
     case compactChatFolders(Bool)
+    case videoMessagesUseBackCamera(Bool)
     case interfaceFont(String)
     case avatarCorners(String)
 
@@ -1341,10 +1343,12 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
             return 3
         case .compactChatFolders:
             return 4
-        case .interfaceFont:
+        case .videoMessagesUseBackCamera:
             return 5
-        case .avatarCorners:
+        case .interfaceFont:
             return 6
+        case .avatarCorners:
+            return 7
         }
     }
 
@@ -1385,6 +1389,12 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
                     settings.compactChatFolders = value
                 }
             })
+        case let .videoMessagesUseBackCamera(value):
+            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "Use Back Camera for Video Messages", value: value, sectionId: self.section, style: .blocks, updated: { value in
+                arguments.updateSettings { settings in
+                    settings.videoMessagesUseBackCamera = value
+                }
+            })
         case let .interfaceFont(label):
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Interface Font", label: label, sectionId: self.section, style: .blocks, action: {
                 arguments.pushController(stuxnetOptionsPickerController(context: arguments.context, title: "Interface Font", options: (0 ... 14).map { (Int64($0), stuxnetInterfaceFontOptionName(Int32($0))) }, currentValue: { settings in
@@ -1412,6 +1422,7 @@ private func stuxnetAppearanceEntries(settings: MiraSettings) -> [StuxnetAppeara
     entries.append(.showMessageSeconds(settings.showMessageSeconds))
     entries.append(.compactChatList(settings.compactChatList))
     entries.append(.compactChatFolders(settings.compactChatFolders))
+    entries.append(.videoMessagesUseBackCamera(settings.videoMessagesUseBackCamera))
     entries.append(.interfaceFont(stuxnetInterfaceFontOptionName(settings.interfaceFont)))
     entries.append(.avatarCorners(stuxnetAvatarCornerStyleName(settings.avatarCornerStyle)))
     return entries

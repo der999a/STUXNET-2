@@ -1,5 +1,6 @@
 import Foundation
 import TelegramCore
+import Postbox
 import SwiftSignalKit
 
 public struct MiraGhostSettings: Codable, Equatable {
@@ -126,6 +127,10 @@ public struct MiraGhostSettings: Codable, Equatable {
 
 public struct MiraSettings: Codable, Equatable {
     public var ghost: [String: MiraGhostSettings]
+    /// Account-scoped Ghost Mode overrides. Keys use the account's stable peer id
+    /// (`account:<peerId>`); the legacy `ghost` dictionary remains the fallback
+    /// for older settings and per-chat overrides.
+    public var ghostByAccount: [String: MiraGhostSettings]
     public var useGlobalGhostMode: Bool
     
     public var saveDeletedMessages: Bool
@@ -154,6 +159,7 @@ public struct MiraSettings: Codable, Equatable {
     
     public var voiceChangerEnabled: Bool
     public var voiceChangerPreset: Int32
+    public var videoMessagesUseBackCamera: Bool
     public var showLocalOnline: Bool
     public var showRealLastSeen: Bool
     public var localMessageEditEnabled: Bool
@@ -176,9 +182,14 @@ public struct MiraSettings: Codable, Equatable {
     public static var defaultSettings: MiraSettings {
         return MiraSettings()
     }
+
+    public var effectiveLocalPremium: Bool {
+        return self.localPremium || self.fakePremiumSince
+    }
     
     public init(
         ghost: [String: MiraGhostSettings] = [:],
+        ghostByAccount: [String: MiraGhostSettings] = [:],
         useGlobalGhostMode: Bool = true,
         saveDeletedMessages: Bool = true,
         saveMessagesHistory: Bool = true,
@@ -202,6 +213,7 @@ public struct MiraSettings: Codable, Equatable {
         screenshotEvasion: Bool = false,
         voiceChangerEnabled: Bool = false,
         voiceChangerPreset: Int32 = 0,
+        videoMessagesUseBackCamera: Bool = false,
         showLocalOnline: Bool = true,
         showRealLastSeen: Bool = true,
         localMessageEditEnabled: Bool = true,
@@ -222,6 +234,7 @@ public struct MiraSettings: Codable, Equatable {
         avatarCornerStyle: Int32 = 0
     ) {
         self.ghost = ghost
+        self.ghostByAccount = ghostByAccount
         self.useGlobalGhostMode = useGlobalGhostMode
         self.saveDeletedMessages = saveDeletedMessages
         self.saveMessagesHistory = saveMessagesHistory
@@ -245,6 +258,7 @@ public struct MiraSettings: Codable, Equatable {
         self.screenshotEvasion = screenshotEvasion
         self.voiceChangerEnabled = voiceChangerEnabled
         self.voiceChangerPreset = voiceChangerPreset
+        self.videoMessagesUseBackCamera = videoMessagesUseBackCamera
         self.showLocalOnline = showLocalOnline
         self.showRealLastSeen = showRealLastSeen
         self.localMessageEditEnabled = localMessageEditEnabled
@@ -275,11 +289,38 @@ public struct MiraSettings: Codable, Equatable {
         }
         return self.ghost["\(peerId.toInt64())"] ?? globalSettings
     }
+
+    /// Returns the Ghost Mode settings for an account, preserving the previous
+    /// global/per-chat behavior when no account override has been configured.
+    public func ghostSettings(forAccountPeerId accountPeerId: PeerId?, peerId: EnginePeer.Id? = nil) -> MiraGhostSettings {
+        let accountSettings: MiraGhostSettings
+        if let accountPeerId = accountPeerId, let value = self.ghostByAccount["account:\(accountPeerId.toInt64())"] {
+            accountSettings = value
+        } else {
+            accountSettings = self.ghost["0"] ?? .defaultSettings
+        }
+
+        guard !self.useGlobalGhostMode, let peerId = peerId else {
+            return accountSettings
+        }
+        return self.ghost["\(peerId.toInt64())"] ?? accountSettings
+    }
+
+    /// Stores an account-scoped Ghost Mode override. Passing nil leaves the
+    /// existing global settings untouched.
+    public mutating func setGhostSettings(_ settings: MiraGhostSettings, forAccountPeerId accountPeerId: PeerId?) {
+        guard let accountPeerId = accountPeerId else {
+            self.ghost["0"] = settings
+            return
+        }
+        self.ghostByAccount["account:\(accountPeerId.toInt64())"] = settings
+    }
     
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: StringCodingKey.self)
 
         self.ghost = (try? container.decodeIfPresent([String: MiraGhostSettings].self, forKey: "ghost")) ?? [:]
+        self.ghostByAccount = (try? container.decodeIfPresent([String: MiraGhostSettings].self, forKey: "ghostByAccount")) ?? [:]
         self.useGlobalGhostMode = try container.decodeIfPresent(Bool.self, forKey: "useGlobalGhostMode") ?? true
         self.saveDeletedMessages = try container.decodeIfPresent(Bool.self, forKey: "saveDeletedMessages") ?? true
         self.saveMessagesHistory = try container.decodeIfPresent(Bool.self, forKey: "saveMessagesHistory") ?? true
@@ -302,7 +343,9 @@ public struct MiraSettings: Codable, Equatable {
         self.streamerMode = try container.decodeIfPresent(Bool.self, forKey: "streamerMode") ?? false
         self.screenshotEvasion = try container.decodeIfPresent(Bool.self, forKey: "screenshotEvasion") ?? false
         self.voiceChangerEnabled = try container.decodeIfPresent(Bool.self, forKey: "voiceChangerEnabled") ?? false
-        self.voiceChangerPreset = try container.decodeIfPresent(Int32.self, forKey: "voiceChangerPreset") ?? 0
+        let decodedVoiceChangerPreset = try container.decodeIfPresent(Int32.self, forKey: "voiceChangerPreset") ?? 0
+        self.voiceChangerPreset = (0 ... 13).contains(decodedVoiceChangerPreset) ? decodedVoiceChangerPreset : 0
+        self.videoMessagesUseBackCamera = try container.decodeIfPresent(Bool.self, forKey: "videoMessagesUseBackCamera") ?? false
         self.showLocalOnline = try container.decodeIfPresent(Bool.self, forKey: "showLocalOnline") ?? true
         self.showRealLastSeen = try container.decodeIfPresent(Bool.self, forKey: "showRealLastSeen") ?? true
         self.localMessageEditEnabled = try container.decodeIfPresent(Bool.self, forKey: "localMessageEditEnabled") ?? true
@@ -327,6 +370,7 @@ public struct MiraSettings: Codable, Equatable {
         var container = encoder.container(keyedBy: StringCodingKey.self)
 
         try container.encode(self.ghost, forKey: "ghost")
+        try container.encode(self.ghostByAccount, forKey: "ghostByAccount")
         try container.encode(self.useGlobalGhostMode, forKey: "useGlobalGhostMode")
         try container.encode(self.saveDeletedMessages, forKey: "saveDeletedMessages")
         try container.encode(self.saveMessagesHistory, forKey: "saveMessagesHistory")
@@ -350,6 +394,7 @@ public struct MiraSettings: Codable, Equatable {
         try container.encode(self.screenshotEvasion, forKey: "screenshotEvasion")
         try container.encode(self.voiceChangerEnabled, forKey: "voiceChangerEnabled")
         try container.encode(self.voiceChangerPreset, forKey: "voiceChangerPreset")
+        try container.encode(self.videoMessagesUseBackCamera, forKey: "videoMessagesUseBackCamera")
         try container.encode(self.showLocalOnline, forKey: "showLocalOnline")
         try container.encode(self.showRealLastSeen, forKey: "showRealLastSeen")
         try container.encode(self.localMessageEditEnabled, forKey: "localMessageEditEnabled")

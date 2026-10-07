@@ -2,7 +2,7 @@ import Foundation
 import Postbox
 import SwiftSignalKit
 
-func miraIsSavableDeletedMessage(transaction: Transaction, message: Message) -> Bool {
+func miraIsSavableDeletedMessage(transaction: Transaction, message: Message, accountPeerId: PeerId? = nil) -> Bool {
     if message.id.namespace != Namespaces.Message.Cloud {
         return false
     }
@@ -15,21 +15,21 @@ func miraIsSavableDeletedMessage(transaction: Transaction, message: Message) -> 
         }
     }
     if let authorId = message.author?.id, let user = transaction.getPeer(authorId) as? TelegramUser, user.botInfo != nil {
-        if !MiraCoreGate.shared.saveForBots {
+        if !MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).saveForBots {
             return false
         }
     }
     return true
 }
 
-func miraPartitionDeletedMessages(transaction: Transaction, ids: [MessageId]) -> (mark: [MessageId], delete: [MessageId]) {
-    if !MiraCoreGate.shared.saveDeletedMessages {
+func miraPartitionDeletedMessages(transaction: Transaction, ids: [MessageId], accountPeerId: PeerId? = nil) -> (mark: [MessageId], delete: [MessageId]) {
+    if !MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).saveDeletedMessages {
         return ([], ids)
     }
     var mark: [MessageId] = []
     var delete: [MessageId] = []
     for id in ids {
-        if let message = transaction.getMessage(id), miraIsSavableDeletedMessage(transaction: transaction, message: message) {
+        if let message = transaction.getMessage(id), miraIsSavableDeletedMessage(transaction: transaction, message: message, accountPeerId: accountPeerId) {
             mark.append(id)
         } else {
             delete.append(id)
@@ -65,7 +65,7 @@ func miraTouchMessage(transaction: Transaction, id: MessageId) {
 }
 
 func miraSnapshotMessageEditIfNeeded(accountPeerId: PeerId, previousMessage: Message, updatedMessage: StoreMessage) {
-    if !MiraCoreGate.shared.saveMessagesHistory {
+    if !MiraCoreGate.shared.snapshot(forAccountPeerId: accountPeerId).saveMessagesHistory {
         return
     }
     if previousMessage.id.namespace != Namespaces.Message.Cloud {

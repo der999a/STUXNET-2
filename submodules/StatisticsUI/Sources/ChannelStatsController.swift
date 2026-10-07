@@ -2356,6 +2356,10 @@ public func channelStatsController(
         controller?.push(messageStatsController(context: context, subject: subject))
     }
     openStoryImpl = { [weak controller] story, sourceView in
+        guard let parentController = controller else {
+            return
+        }
+        StoryContainerScreen.confirmStoryOpeningIfNeeded(context: context, parentController: parentController, action: {
         let storyContent = SingleStoryContentContextImpl(context: context, storyId: StoryId(peerId: peerId, id: story.id), storyItem: story, readGlobally: false)
         let _ = (storyContent.state
         |> take(1)
@@ -2413,6 +2417,7 @@ public func channelStatsController(
                 }
             )
             controller.push(storyContainerScreen)
+        })
         })
     }
     contextActionImpl = { [weak controller] messageId, sourceNode, gesture in

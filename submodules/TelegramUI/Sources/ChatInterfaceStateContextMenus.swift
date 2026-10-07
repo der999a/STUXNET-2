@@ -1640,7 +1640,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
                     })
                 })))
             }
-            if MiraCoreGate.shared.localMessageEditEnabled {
+            if MiraCoreGate.shared.snapshot(forAccountPeerId: context.account.peerId).localMessageEditEnabled {
                 actions.append(.action(ContextMenuActionItem(text: "Edit locally", icon: { theme in
                     return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Pencil"), color: theme.actionSheet.primaryTextColor)
                 }, action: { c, _ in

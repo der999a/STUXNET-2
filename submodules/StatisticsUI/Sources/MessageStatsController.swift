@@ -509,6 +509,10 @@ public func messageStatsController(context: AccountContext, updatedPresentationD
         })
     }
     openStoryImpl = { [weak controller] peerId, story, sourceView in
+        guard let parentController = controller else {
+            return
+        }
+        StoryContainerScreen.confirmStoryOpeningIfNeeded(context: context, parentController: parentController, action: {
         let storyContent = SingleStoryContentContextImpl(context: context, storyId: EngineStoryId(peerId: peerId, id: story.id), storyItem: story, readGlobally: false)
         let _ = (storyContent.state
         |> take(1)
@@ -566,6 +570,7 @@ public func messageStatsController(context: AccountContext, updatedPresentationD
                 }
             )
             controller.push(storyContainerScreen)
+        })
         })
     }
     storyContextActionImpl = { [weak controller] peerId, sourceNode, gesture, isMessage in

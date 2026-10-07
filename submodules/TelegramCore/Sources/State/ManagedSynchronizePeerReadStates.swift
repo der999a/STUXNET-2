@@ -90,7 +90,7 @@ private final class SynchronizePeerReadStatesContextImpl {
                         signal = synchronizePeerReadState(network: self.network, postbox: self.postbox, stateManager: self.stateManager, peerId: peerId, push: false, validate: true)
                         |> ignoreValues
                     case let .Push(_, thenSync):
-                        if MiraCoreGate.shared.sendReadMessages {
+                        if MiraCoreGate.shared.snapshot(forAccountPeerId: stateManager.accountPeerId).sendReadMessages {
                             signal = synchronizePeerReadState(network: self.network, postbox: self.postbox, stateManager: stateManager, peerId: peerId, push: true, validate: thenSync)
                             |> ignoreValues
                         } else {

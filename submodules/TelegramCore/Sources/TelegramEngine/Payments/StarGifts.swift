@@ -2659,7 +2659,7 @@ private final class ProfileGiftsContextImpl {
         var effectiveCount = useMainData ? self.count : self.filteredCount
         let effectiveDataState = useMainData ? self.dataState : self.filteredDataState
 
-        if self.collectionId == nil, self.peerId == self.account.peerId, MiraCoreGate.shared.fakeGiftsEnabled, !self.injectedFakeGifts.isEmpty {
+        if self.collectionId == nil, self.peerId == self.account.peerId, MiraCoreGate.shared.snapshot(forAccountPeerId: self.account.peerId).fakeGiftsEnabled, !self.injectedFakeGifts.isEmpty {
             let existingReferences = Set(stateGifts.compactMap { $0.reference })
             let newFakeGifts = self.injectedFakeGifts.filter { gift in
                 if let reference = gift.reference {

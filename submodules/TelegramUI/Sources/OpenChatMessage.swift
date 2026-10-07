@@ -29,7 +29,7 @@ import WallpaperGalleryScreen
 import BrowserUI
 import PeerMessagesMediaPlaylist
 
-func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
+func openChatMessageImpl(_ params: OpenChatMessageParams, skipStoryConfirmation: Bool = false) -> Bool {
     var story: TelegramMediaStory?
     for media in params.message.media {
         if let media = media as? TelegramMediaStory {
@@ -42,6 +42,12 @@ func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
     if let story {
         let navigationController = params.navigationController
         let context = params.context
+        if !skipStoryConfirmation, let navigationController {
+            StoryContainerScreen.confirmStoryOpeningIfNeeded(context: context, parentController: navigationController, action: {
+                _ = openChatMessageImpl(params, skipStoryConfirmation: true)
+            })
+            return true
+        }
         let storyContent = SingleStoryContentContextImpl(context: params.context, storyId: story.storyId, readGlobally: true)
         let _ = (storyContent.state
         |> take(1)

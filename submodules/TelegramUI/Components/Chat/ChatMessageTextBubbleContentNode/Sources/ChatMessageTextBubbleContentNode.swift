@@ -319,7 +319,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
                     dateText = "\(dateText0) \(item.context.sharedContext.immediateMiraSettings.deletedMark)"
                 }
                 let miraOverride: LocalOverrideRecord?
-                if MiraCoreGate.shared.localMessageEditEnabled {
+                if MiraCoreGate.shared.snapshot(forAccountPeerId: item.context.account.peerId).localMessageEditEnabled {
                     miraOverride = item.context.account.miraMessageHistoryStore.override(for: item.message.id)
                 } else {
                     miraOverride = nil

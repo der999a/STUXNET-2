@@ -9,7 +9,25 @@ import PresentationDataUtils
 import AvatarNode
 
 public extension StoryContainerScreen {
+    static func confirmStoryOpeningIfNeeded(context: AccountContext, parentController: ViewController, action: @escaping () -> Void) {
+        guard context.sharedContext.immediateMiraSettings.confirmViewStory else {
+            action()
+            return
+        }
+        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+        parentController.present(textAlertController(context: context, title: nil, text: presentationData.strings.Chat_OpenStory, actions: [
+            TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+            TextAlertAction(type: .defaultAction, title: presentationData.strings.Chat_OpenStory, action: action)
+        ]), in: .window(.root))
+    }
+
     static func openArchivedStories(context: AccountContext, parentController: ViewController, avatarNode: AvatarNode, sharedProgressDisposable: MetaDisposable?) {
+        confirmStoryOpeningIfNeeded(context: context, parentController: parentController, action: {
+            self.openArchivedStoriesConfirmed(context: context, parentController: parentController, avatarNode: avatarNode, sharedProgressDisposable: sharedProgressDisposable)
+        })
+    }
+
+    private static func openArchivedStoriesConfirmed(context: AccountContext, parentController: ViewController, avatarNode: AvatarNode, sharedProgressDisposable: MetaDisposable?) {
         let storyContent = StoryContentContextImpl(context: context, isHidden: true, focusedPeerId: nil, singlePeer: false)
         let signal = storyContent.state
         |> take(1)
@@ -89,7 +107,7 @@ public extension StoryContainerScreen {
         }
     }
     
-    static func openPeerStories(context: AccountContext, peerId: EnginePeer.Id, parentController: ViewController, avatarNode: AvatarNode?, sharedProgressDisposable: MetaDisposable? = nil) {
+    static func openPeerStories(context: AccountContext, peerId: EnginePeer.Id, parentController: ViewController, avatarNode: AvatarNode?, sharedProgressDisposable: MetaDisposable? = nil, skipStoryConfirmation: Bool = false) {
         return openPeerStoriesCustom(
             context: context,
             peerId: peerId,
@@ -157,7 +175,8 @@ public extension StoryContainerScreen {
                 if let sharedProgressDisposable {
                     sharedProgressDisposable.set(disposable)
                 }
-            }
+            },
+            skipStoryConfirmation: skipStoryConfirmation
         )
     }
     
@@ -173,14 +192,16 @@ public extension StoryContainerScreen {
         transitionOut: @escaping (EnginePeer.Id) -> StoryContainerScreen.TransitionOut?,
         setFocusedItem: @escaping (Signal<EngineStoryId?, NoError>) -> Void,
         setProgress: @escaping (Signal<Never, NoError>) -> Void,
-        completion: @escaping (StoryContainerScreen) -> Void = { _ in }
+        completion: @escaping (StoryContainerScreen) -> Void = { _ in },
+        skipStoryConfirmation: Bool = false
     ) {
         let miraSettings = context.sharedContext.immediateMiraSettings
-        if miraSettings.suggestGhostBeforeStory && !miraSettings.ghostSettings(forPeerId: nil).isGhostActive {
+        let ghostSettings = miraSettings.ghostSettings(forAccountPeerId: context.account.peerId)
+        if !skipStoryConfirmation && ghostSettings.suggestGhostBeforeStory && !ghostSettings.isGhostActive {
             let presentationData = context.sharedContext.currentPresentationData.with { $0 }
-            parentController.present(textAlertController(context: context, title: nil, text: "Open stories in Ghost Mode? Your view will not be reported.", actions: [
+            parentController.present(textAlertController(context: context, title: nil, text: presentationData.strings.Story_StealthMode_ControlText, actions: [
                 TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
-                TextAlertAction(type: .genericAction, title: "Open Normally", action: {
+                TextAlertAction(type: .genericAction, title: presentationData.strings.Chat_OpenStory, action: {
                     openPeerStoriesCustomConfirmed(
                         context: context,
                         peerId: peerId,
@@ -196,11 +217,11 @@ public extension StoryContainerScreen {
                         completion: completion
                     )
                 }),
-                TextAlertAction(type: .defaultAction, title: "Open in Ghost Mode", action: {
+                TextAlertAction(type: .defaultAction, title: presentationData.strings.Story_StealthMode_EnableAndOpenAction, action: {
                     let _ = updateMiraSettingsInteractively(accountManager: context.sharedContext.accountManager, { settings in
-                        var ghostSettings = settings.ghost["0"] ?? .defaultSettings
+                        var ghostSettings = settings.ghostSettings(forAccountPeerId: context.account.peerId)
                         ghostSettings.setGhostModeEnabled(true)
-                        settings.ghost["0"] = ghostSettings
+                        settings.setGhostSettings(ghostSettings, forAccountPeerId: context.account.peerId)
                     }).start()
                     openPeerStoriesCustomConfirmed(
                         context: context,
@@ -220,11 +241,11 @@ public extension StoryContainerScreen {
             ]), in: .window(.root))
             return
         }
-        if context.sharedContext.immediateMiraSettings.confirmViewStory {
+        if !skipStoryConfirmation && context.sharedContext.immediateMiraSettings.confirmViewStory {
             let presentationData = context.sharedContext.currentPresentationData.with { $0 }
-            parentController.present(textAlertController(context: context, title: nil, text: "Open stories?", actions: [
+            parentController.present(textAlertController(context: context, title: nil, text: presentationData.strings.Chat_OpenStory, actions: [
                 TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
-                TextAlertAction(type: .defaultAction, title: "Open", action: {
+                TextAlertAction(type: .defaultAction, title: presentationData.strings.Chat_OpenStory, action: {
                     openPeerStoriesCustomConfirmed(
                         context: context,
                         peerId: peerId,

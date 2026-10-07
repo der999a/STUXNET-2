@@ -4374,7 +4374,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
         }
     }
     
-    func performMemberAction(member: PeerInfoMember, action: PeerInfoMemberAction) {
+    func performMemberAction(member: PeerInfoMember, action: PeerInfoMemberAction, confirmed: Bool = false) {
         guard let data = self.data, let peer = data.peer else {
             return
         }
@@ -4446,6 +4446,12 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
             data.members?.membersContext.removeMember(memberId: member.id)
         case let .openStories(sourceView):
             guard let controller = self.controller else {
+                return
+            }
+            if !confirmed, !(sourceView.asyncdisplaykit_node is AvatarNode) {
+                StoryContainerScreen.confirmStoryOpeningIfNeeded(context: self.context, parentController: controller, action: { [weak self] in
+                    self?.performMemberAction(member: member, action: action, confirmed: true)
+                })
                 return
             }
             if let avatarNode = sourceView.asyncdisplaykit_node as? AvatarNode {

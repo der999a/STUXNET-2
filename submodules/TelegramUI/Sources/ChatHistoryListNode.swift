@@ -2133,7 +2133,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                     isMusicPlaylist = isMusicPlaylistValue
                 }
                 
-                var isPremium = context.sharedContext.immediateMiraSettings.localPremium
+                var isPremium = context.sharedContext.immediateMiraSettings.effectiveLocalPremium
                 if case let .user(user) = accountPeer, user.isPremium {
                     isPremium = true
                 }

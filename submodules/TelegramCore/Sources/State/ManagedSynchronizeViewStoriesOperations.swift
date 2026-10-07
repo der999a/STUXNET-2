@@ -119,7 +119,7 @@ func managedSynchronizeViewStoriesOperations(postbox: Postbox, network: Network,
 }
 
 private func pushStoriesAreSeen(postbox: Postbox, network: Network, stateManager: AccountStateManager, peer: Peer, operation: SynchronizeViewStoriesOperation) -> Signal<Void, NoError> {
-    guard MiraCoreGate.shared.sendReadStories else {
+    guard MiraCoreGate.shared.snapshot(forAccountPeerId: stateManager.accountPeerId).sendReadStories else {
         return .complete()
     }
     guard let inputPeer = apiInputPeer(peer) else {
