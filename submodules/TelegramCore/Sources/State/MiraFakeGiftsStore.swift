@@ -290,7 +290,7 @@ extension MiraFakeGiftsStore {
                 switch gift {
                 case let .unique(uniqueGift):
                     if !uniqueGift.slug.isEmpty {
-                        reference = .slug(uniqueGift.slug)
+                        reference = .slug(slug: uniqueGift.slug)
                     } else {
                         reference = .peer(peerId: account.peerId, id: entry.stableSavedId)
                     }
