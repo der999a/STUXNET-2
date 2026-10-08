@@ -370,6 +370,19 @@ extension MiraFakeGiftsStore {
                 if let fromPeerId = entry.fromPeerId {
                     fromPeer = transaction.getPeer(EnginePeer.Id(fromPeerId)).flatMap { EnginePeer($0) }
                 }
+
+                // A gift sender is rendered as a user in Telegram's gift
+                // bubble. Treat groups/channels/secret chats as unresolved so
+                // a malformed sender id cannot produce an invalid local
+                // message author or peer projection.
+                if let resolvedFromPeer = fromPeer {
+                    switch resolvedFromPeer {
+                    case .user:
+                        break
+                    case .legacyGroup, .channel, .community, .secretChat:
+                        fromPeer = nil
+                    }
+                }
                 let reference: StarGiftReference
                 switch gift {
                 case .unique:
@@ -428,6 +441,15 @@ extension MiraFakeGiftsStore {
                 var fromPeer: EnginePeer?
                 if let fromPeerId = entry.fromPeerId {
                     fromPeer = transaction.getPeer(EnginePeer.Id(fromPeerId)).flatMap { EnginePeer($0) }
+                }
+
+                if let resolvedFromPeer = fromPeer {
+                    switch resolvedFromPeer {
+                    case .user:
+                        break
+                    case .legacyGroup, .channel, .community, .secretChat:
+                        fromPeer = nil
+                    }
                 }
 
                 let chatPeerId: PeerId

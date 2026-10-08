@@ -94,8 +94,13 @@ public struct MiraGhostSettings: Codable, Equatable {
         self.sendOfflinePacketAfterOnline = try container.decodeIfPresent(Bool.self, forKey: "sendOfflinePacketAfterOnline") ?? false
         self.markReadAfterAction = try container.decodeIfPresent(Bool.self, forKey: "markReadAfterAction") ?? false
         self.useScheduledMessages = try container.decodeIfPresent(Bool.self, forKey: "useScheduledMessages") ?? false
-        self.scheduledDelaySeconds = try container.decodeIfPresent(Int32.self, forKey: "scheduledDelaySeconds") ?? 12
-        self.sendWithoutSound = try container.decodeIfPresent(Int32.self, forKey: "sendWithoutSound") ?? 0
+        // Clamp persisted values before they reach the enqueue path. A stale
+        // or manually edited settings blob must not be able to overflow the
+        // Int32 timestamp calculation used for scheduled messages.
+        let decodedDelay = try container.decodeIfPresent(Int32.self, forKey: "scheduledDelaySeconds") ?? 12
+        self.scheduledDelaySeconds = min(max(decodedDelay, 0), 86_400)
+        let decodedSendWithoutSound = try container.decodeIfPresent(Int32.self, forKey: "sendWithoutSound") ?? 0
+        self.sendWithoutSound = (0 ... 2).contains(decodedSendWithoutSound) ? decodedSendWithoutSound : 0
         self.suggestGhostBeforeStory = try container.decodeIfPresent(Bool.self, forKey: "suggestGhostBeforeStory") ?? false
         self.sendReadMessagesLocked = try container.decodeIfPresent(Bool.self, forKey: "sendReadMessagesLocked") ?? false
         self.sendReadStoriesLocked = try container.decodeIfPresent(Bool.self, forKey: "sendReadStoriesLocked") ?? false

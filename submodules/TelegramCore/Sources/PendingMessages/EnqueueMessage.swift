@@ -573,7 +573,11 @@ public func enqueueMessages(account: Account, peerId: PeerId, messages: [Enqueue
     var messages = messages
     let miraGate = MiraCoreGate.shared.snapshot(forAccountPeerId: account.peerId)
     if miraGate.useScheduledMessages && miraGate.isGhostActive, peerId.namespace != Namespaces.Peer.SecretChat {
-        let scheduleTime = Int32(account.network.context.globalTime()) + miraGate.scheduledDelaySeconds
+        // Widen the calculation so malformed in-memory settings cannot trap
+        // when the delay is added near the Int32 timestamp boundary.
+        let now = Int64(account.network.context.globalTime())
+        let delay = max(0, Int64(miraGate.scheduledDelaySeconds))
+        let scheduleTime = Int32(clamping: now + delay)
         messages = messages.map { message -> EnqueueMessage in
             guard case .message = message else {
                 return message
