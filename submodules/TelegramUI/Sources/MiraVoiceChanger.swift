@@ -180,6 +180,7 @@ private struct MiraVoiceChangerEffectParams {
 public enum MiraVoiceChanger {
     private static let sampleRate: Double = 48000.0
     private static let encoderFrameSize = 960
+    private static let maximumProcessingDuration: Double = 5.0 * 60.0
 
     public static func miraProcessVoiceMessage(sourceURL: URL, preset: Int32, completion: @escaping (URL?) -> Void) {
         miraProcessVoiceMessageDetailed(sourceURL: sourceURL, preset: preset, completion: { result in
@@ -254,12 +255,17 @@ public enum MiraVoiceChanger {
             buffer.deallocate()
         }
         var samples: [Int16] = []
+        let maximumSampleCount = Int(sampleRate * maximumProcessingDuration)
         while true {
             let count = reader.read(buffer, bufSize: Int32(capacity * MemoryLayout<Int16>.size))
             if count <= 0 {
                 break
             }
-            samples.append(contentsOf: UnsafeBufferPointer(start: buffer, count: Int(count)))
+            let sampleCount = Int(count)
+            guard sampleCount <= maximumSampleCount - samples.count else {
+                return nil
+            }
+            samples.append(contentsOf: UnsafeBufferPointer(start: buffer, count: sampleCount))
         }
         return samples
     }
