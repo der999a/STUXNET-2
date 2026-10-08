@@ -239,6 +239,51 @@ public final class MiraFakeGiftsStore {
         }
     }
 
+    /// Returns true when a saved-gift reference belongs to this local store.
+    /// Synthetic gifts must never be sent to the Telegram payments API: their
+    /// saved ids only exist in the local profile projection.
+    public func isLocalReference(_ reference: StarGiftReference, accountPeerId: PeerId) -> Bool {
+        guard case let .peer(peerId, savedId) = reference, peerId == accountPeerId else {
+            return false
+        }
+        return self.queue.sync {
+            self.loadIfNeeded()
+            return self.cache.contains(where: { $0.stableSavedId == savedId })
+        }
+    }
+
+    /// Applies a local profile change without touching the network.
+    public func updateLocalReference(_ reference: StarGiftReference, accountPeerId: PeerId, added: Bool? = nil, pinned: Bool? = nil) {
+        guard case let .peer(peerId, savedId) = reference, peerId == accountPeerId else {
+            return
+        }
+        self.queue.async {
+            self.loadIfNeeded()
+            guard let index = self.cache.firstIndex(where: { $0.stableSavedId == savedId }) else {
+                return
+            }
+            var gift = self.cache[index]
+            if let added {
+                gift.isHidden = !added
+                if !added {
+                    gift.isSaved = false
+                }
+            }
+            if let pinned {
+                gift.isSaved = pinned
+                if pinned {
+                    gift.isHidden = false
+                }
+            }
+            guard gift != self.cache[index] else {
+                return
+            }
+            self.cache[index] = gift
+            self.saveLocked()
+            self.changesPromise.set(self.cache)
+        }
+    }
+
     public func clear() {
         self.queue.async {
             self.cache.removeAll()
@@ -327,12 +372,11 @@ extension MiraFakeGiftsStore {
                 }
                 let reference: StarGiftReference
                 switch gift {
-                case let .unique(uniqueGift):
-                    if !uniqueGift.slug.isEmpty {
-                        reference = .slug(slug: uniqueGift.slug)
-                    } else {
-                        reference = .peer(peerId: account.peerId, id: entry.stableSavedId)
-                    }
+                case .unique:
+                    // Both regular and unique fake gifts are local objects.
+                    // A slug reference would be interpreted as a real server
+                    // gift by GiftViewScreen and could trigger network actions.
+                    reference = .peer(peerId: account.peerId, id: entry.stableSavedId)
                 case .generic:
                     reference = .peer(peerId: account.peerId, id: entry.stableSavedId)
                 }

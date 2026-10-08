@@ -2125,6 +2125,10 @@ private final class ProfileGiftsContextImpl {
     }
     
     func updateStarGiftAddedToProfile(reference: StarGiftReference, added: Bool) {
+        if self.account.miraFakeGiftsStore.isLocalReference(reference, accountPeerId: self.account.peerId) {
+            self.account.miraFakeGiftsStore.updateLocalReference(reference, accountPeerId: self.account.peerId, added: added)
+            return
+        }
         self.actionDisposable.set(
             _internal_updateStarGiftAddedToProfile(account: self.account, reference: reference, added: added).startStrict()
         )
@@ -2165,6 +2169,10 @@ private final class ProfileGiftsContextImpl {
     }
     
     func updateStarGiftPinnedToTop(reference: StarGiftReference, pinnedToTop: Bool) {
+        if self.account.miraFakeGiftsStore.isLocalReference(reference, accountPeerId: self.account.peerId) {
+            self.account.miraFakeGiftsStore.updateLocalReference(reference, accountPeerId: self.account.peerId, pinned: pinnedToTop)
+            return
+        }
         var pinnedGifts = self.gifts.filter { $0.pinnedToTop }
         var saveToProfile = false
         if var gift = self.gifts.first(where: { $0.reference == reference }) {
@@ -2247,7 +2255,12 @@ private final class ProfileGiftsContextImpl {
     }
     
     public func updatePinnedToTopStarGifts(references: [StarGiftReference]) {
-        let existingGifts = Set(references)
+        let localReferences = references.filter { self.account.miraFakeGiftsStore.isLocalReference($0, accountPeerId: self.account.peerId) }
+        for reference in localReferences {
+            self.account.miraFakeGiftsStore.updateLocalReference(reference, accountPeerId: self.account.peerId, pinned: true)
+        }
+        let remoteReferences = references.filter { !localReferences.contains($0) }
+        let existingGifts = Set(remoteReferences)
         var saveSignals: [Signal<Never, NoError>] = []
         let currentPinnedGifts = self.gifts.filter { gift in
             if let reference = gift.reference {
@@ -2274,7 +2287,7 @@ private final class ProfileGiftsContextImpl {
         }
         
         var pinnedGifts: [ProfileGiftsContext.State.StarGift] = []
-        for reference in references {
+        for reference in remoteReferences {
             if let gift = currentPinnedGifts.first(where: { $0.reference == reference }) {
                 pinnedGifts.append(gift)
             }
@@ -2284,7 +2297,10 @@ private final class ProfileGiftsContextImpl {
         
         self.pushState()
         
-        var signal = _internal_updateStarGiftsPinnedToTop(account: self.account, peerId: self.peerId, references: pinnedGifts.compactMap { $0.reference })
+        let pinnedReferences = pinnedGifts.compactMap { $0.reference }
+        var signal: Signal<Never, NoError> = pinnedReferences.isEmpty
+            ? .complete()
+            : _internal_updateStarGiftsPinnedToTop(account: self.account, peerId: self.peerId, references: pinnedReferences)
         if !saveSignals.isEmpty {
             signal = combineLatest(saveSignals)
             |> ignoreValues
@@ -2313,6 +2329,9 @@ private final class ProfileGiftsContextImpl {
     }
         
     func convertStarGift(reference: StarGiftReference) {
+        if self.account.miraFakeGiftsStore.isLocalReference(reference, accountPeerId: self.account.peerId) {
+            return
+        }
         self.actionDisposable.set(
             _internal_convertStarGift(account: self.account, reference: reference).startStrict()
         )
