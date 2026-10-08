@@ -255,11 +255,11 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
             return
         }
         if let value = Int64(sender) {
+            guard value > 0, value <= 0x00ffffffffffffff else {
+                addMessages(nil, sender)
+                return
+            }
             let _ = (context.account.postbox.transaction { transaction -> EnginePeer? in
-                let encodedPeerId = PeerId(value)
-                if let peer = transaction.getPeer(encodedPeerId).flatMap(EnginePeer.init) {
-                    return peer
-                }
                 let userPeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(value))
                 return transaction.getPeer(userPeerId).flatMap(EnginePeer.init)
             } |> deliverOnMainQueue).start(next: { peer in
