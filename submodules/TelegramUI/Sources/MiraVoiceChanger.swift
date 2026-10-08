@@ -262,7 +262,7 @@ public enum MiraVoiceChanger {
                 break
             }
             let sampleCount = Int(count)
-            guard sampleCount <= maximumSampleCount - samples.count else {
+            guard sampleCount <= capacity, sampleCount <= maximumSampleCount - samples.count else {
                 return nil
             }
             samples.append(contentsOf: UnsafeBufferPointer(start: buffer, count: sampleCount))
