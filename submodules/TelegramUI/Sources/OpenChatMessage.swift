@@ -43,7 +43,10 @@ func openChatMessageImpl(_ params: OpenChatMessageParams, skipStoryConfirmation:
         let navigationController = params.navigationController
         let context = params.context
         if !skipStoryConfirmation, let navigationController {
-            StoryContainerScreen.confirmStoryOpeningIfNeeded(context: context, parentController: navigationController, action: {
+            guard let parentController = navigationController.topViewController as? ViewController else {
+                return false
+            }
+            StoryContainerScreen.confirmStoryOpeningIfNeeded(context: context, parentController: parentController, action: {
                 _ = openChatMessageImpl(params, skipStoryConfirmation: true)
             })
             return true

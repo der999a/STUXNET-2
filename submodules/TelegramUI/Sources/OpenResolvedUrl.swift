@@ -1501,13 +1501,16 @@ func openResolvedUrlImpl(
                     guard let navigationController else {
                         return
                     }
+                    guard let parentController = navigationController.topViewController as? ViewController else {
+                        return
+                    }
                     StoryContainerScreen.openPeerStoriesCustom(
                         context: context,
                         peerId: peerId,
                         focusOnId: id,
                         isHidden: false,
                         singlePeer: true,
-                        parentController: navigationController,
+                        parentController: parentController,
                         transitionIn: {
                             return nil
                         },
