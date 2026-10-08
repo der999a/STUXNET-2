@@ -2314,6 +2314,9 @@ private final class ProfileGiftsContextImpl {
     }
     
     public func dropOriginalDetails(reference: StarGiftReference) -> Signal<Never, DropStarGiftOriginalDetailsError> {
+        if self.account.miraFakeGiftsStore.isLocalReference(reference, accountPeerId: self.account.peerId) {
+            return .fail(.generic)
+        }
         if let index = self.gifts.firstIndex(where: { $0.reference == reference }), case let .unique(uniqueGift) = self.gifts[index].gift {
             let updatedUniqueGift = uniqueGift.withAttributes(uniqueGift.attributes.filter { $0.attributeType != .originalInfo })
             self.gifts[index] = self.gifts[index].withGift(.unique(updatedUniqueGift))
@@ -2344,6 +2347,9 @@ private final class ProfileGiftsContextImpl {
     }
     
     func transferStarGift(prepaid: Bool, reference: StarGiftReference, peerId: EnginePeer.Id) -> Signal<Never, TransferStarGiftError> {
+        if self.account.miraFakeGiftsStore.isLocalReference(reference, accountPeerId: self.account.peerId) {
+            return .fail(.generic)
+        }
         if let count = self.count {
             self.count = max(0, count - 1)
         }
@@ -2538,6 +2544,9 @@ private final class ProfileGiftsContextImpl {
     }
     
     func upgradeStarGift(formId: Int64?, reference: StarGiftReference, keepOriginalInfo: Bool) -> Signal<ProfileGiftsContext.State.StarGift, UpgradeStarGiftError> {
+        if self.account.miraFakeGiftsStore.isLocalReference(reference, accountPeerId: self.account.peerId) {
+            return .fail(.generic)
+        }
         return Signal { [weak self] subscriber in
             guard let self else {
                 return EmptyDisposable
@@ -2573,6 +2582,9 @@ private final class ProfileGiftsContextImpl {
     }
     
     func updateStarGiftResellPrice(reference: StarGiftReference, price: CurrencyAmount?, id: Int64?) -> Signal<Never, UpdateStarGiftPriceError> {
+        if self.account.miraFakeGiftsStore.isLocalReference(reference, accountPeerId: self.account.peerId) {
+            return .fail(.generic)
+        }
         return Signal { [weak self] subscriber in
             guard let self else {
                 return EmptyDisposable
