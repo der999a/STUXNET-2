@@ -97,7 +97,9 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
     }
 
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
-        let arguments = arguments as! MiraFakeMessageControllerArguments
+        guard let arguments = arguments as? MiraFakeMessageControllerArguments else {
+            return ItemListTextItem(presentationData: presentationData, text: .plain(""), sectionId: self.section)
+        }
         switch self {
         case let .input(text):
             return ItemListMultilineInputItem(presentationData: presentationData, text: text, placeholder: "Message text", maxLength: nil, sectionId: self.section, style: .blocks, textUpdated: { value in
@@ -148,7 +150,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
                 var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date(timeIntervalSince1970: TimeInterval(date)))
                 components.second = previousSeconds
                 if let updatedDate = calendar.date(from: components) {
-                    arguments.state.exactDate = Int32(updatedDate.timeIntervalSince1970)
+                    arguments.state.exactDate = miraClampedMessageTimestamp(Int64(updatedDate.timeIntervalSince1970))
                     arguments.state.exactSeconds = String(format: "%02d", previousSeconds)
                     arguments.updated()
                 }
@@ -156,14 +158,13 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
         case let .exactSeconds(text):
             return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: text, placeholder: "Seconds (0-59)", type: .number, sectionId: self.section, textUpdated: { value in
                 let filtered = String(value.filter { $0.isNumber }.prefix(2))
-                arguments.state.exactSeconds = filtered
-                if let seconds = Int(filtered), seconds <= 59 {
-                    let calendar = Calendar.current
-                    var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date(timeIntervalSince1970: TimeInterval(arguments.state.exactDate)))
-                    components.second = seconds
-                    if let updatedDate = calendar.date(from: components) {
-                        arguments.state.exactDate = Int32(updatedDate.timeIntervalSince1970)
-                    }
+                let seconds = min(59, Int(filtered) ?? 0)
+                arguments.state.exactSeconds = String(format: "%02d", seconds)
+                let calendar = Calendar.current
+                var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date(timeIntervalSince1970: TimeInterval(arguments.state.exactDate)))
+                components.second = seconds
+                if let updatedDate = calendar.date(from: components) {
+                    arguments.state.exactDate = miraClampedMessageTimestamp(Int64(updatedDate.timeIntervalSince1970))
                 }
                 arguments.updated()
             }, action: {})
@@ -188,6 +189,12 @@ private let miraFakeMessageDatePresets: [(String, Int32?)] = [
     ("Custom (days back)", -1)
 ]
 
+private let miraFakeMessageMaximumBatchSize = 1000
+
+private func miraClampedMessageTimestamp(_ value: Int64) -> Int32 {
+    return Int32(max(Int64(Int32.min), min(Int64(Int32.max), value)))
+}
+
 public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -> ViewController {
     let state = MiraFakeMessageState()
     let versionPromise = ValuePromise<Int>(0, ignoreRepeated: true)
@@ -205,6 +212,8 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
                 .components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
+                .prefix(miraFakeMessageMaximumBatchSize)
+                .map { $0 }
         } else {
             let text = state.text.trimmingCharacters(in: .whitespacesAndNewlines)
             texts = text.isEmpty ? [] : [text]
@@ -212,23 +221,24 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
         guard !texts.isEmpty else {
             return
         }
-        let now = Int32(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970)
+        let now = miraClampedMessageTimestamp(Int64(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970))
         let baseDate: Int32
         if state.datePreset == miraFakeMessageDatePresets.count - 2 {
-            baseDate = state.exactDate
+            baseDate = miraClampedMessageTimestamp(Int64(state.exactDate))
         } else if state.datePreset < miraFakeMessageDatePresets.count, let offset = miraFakeMessageDatePresets[state.datePreset].1 {
             if offset < 0 {
-                let days = max(0, Int32(state.customDaysBack) ?? 0)
-                baseDate = now - days * 86400
+                let requestedDays = Int64(state.customDaysBack) ?? 0
+                let days = max(0, min(requestedDays, Int64(Int32.max) / 86400))
+                baseDate = miraClampedMessageTimestamp(Int64(now) - days * 86400)
             } else {
-                baseDate = now - offset
+                baseDate = miraClampedMessageTimestamp(Int64(now) - Int64(offset))
             }
         } else {
             baseDate = now
         }
         for (index, text) in texts.enumerated() {
             // Keep scripted lines in their entered order when the chat sorts by date.
-            let date = baseDate - Int32(texts.count - 1 - index)
+            let date = miraClampedMessageTimestamp(Int64(baseDate) - Int64(texts.count - 1 - index))
             let _ = context.engine.messages.miraAddFakeMessage(peerId: peerId, text: text, outgoing: state.outgoing, date: date, authorPeerId: authorPeerId, authorName: authorName).start()
         }
         dismissImpl?()
@@ -362,7 +372,9 @@ private enum MiraFakeMessagesListEntry: ItemListNodeEntry {
     }
 
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
-        let arguments = arguments as! MiraFakeMessagesListArguments
+        guard let arguments = arguments as? MiraFakeMessagesListArguments else {
+            return ItemListTextItem(presentationData: presentationData, text: .plain(""), sectionId: self.section)
+        }
         switch self {
         case let .add(title):
             return ItemListDisclosureItem(presentationData: presentationData, title: title, label: "", sectionId: self.section, style: .blocks, action: {

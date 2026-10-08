@@ -258,7 +258,19 @@ public final class MiraMessageHistoryStore {
         }
         self.didLoadFakes = true
         if let data = FileManager.default.contents(atPath: self.fakeMessagesFilePath), let records = try? JSONDecoder().decode([FakeMessageRecord].self, from: data) {
-            self.fakeCache = records
+            // Older/corrupt files must not be allowed to feed invalid namespaces or duplicate
+            // identifiers into message deletion and context-menu lookups.
+            var seenIds = Set<String>()
+            self.fakeCache = records.filter { record in
+                guard !record.id.isEmpty, record.messageNamespace == Namespaces.Message.Local else {
+                    return false
+                }
+                guard !seenIds.contains(record.id) else {
+                    return false
+                }
+                seenIds.insert(record.id)
+                return true
+            }
         }
         self.fakeMessagesChangesPromise.set(self.fakeCache)
     }
