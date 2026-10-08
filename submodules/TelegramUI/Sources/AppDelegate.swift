@@ -433,22 +433,16 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                             var notificationRequestId: NotificationManagedNotificationRequestId?
                             
                             var peerId: PeerId?
-                            if let fromId = payload["from_id"] {
-                                let fromIdValue = fromId as! NSString
-                                peerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(Int64(fromIdValue as String) ?? 0))
-                            } else if let fromId = payload["chat_id"] {
-                                let fromIdValue = fromId as! NSString
-                                peerId = PeerId(namespace: Namespaces.Peer.CloudGroup, id: PeerId.Id._internalFromInt64Value(Int64(fromIdValue as String) ?? 0))
-                            } else if let fromId = payload["channel_id"] {
-                                let fromIdValue = fromId as! NSString
-                                peerId = PeerId(namespace: Namespaces.Peer.CloudChannel, id: PeerId.Id._internalFromInt64Value(Int64(fromIdValue as String) ?? 0))
+                            if let fromId = payload["from_id"], let fromIdValue = notificationInt64(fromId) {
+                                peerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(fromIdValue))
+                            } else if let fromId = payload["chat_id"], let fromIdValue = notificationInt64(fromId) {
+                                peerId = PeerId(namespace: Namespaces.Peer.CloudGroup, id: PeerId.Id._internalFromInt64Value(fromIdValue))
+                            } else if let fromId = payload["channel_id"], let fromIdValue = notificationInt64(fromId) {
+                                peerId = PeerId(namespace: Namespaces.Peer.CloudChannel, id: PeerId.Id._internalFromInt64Value(fromIdValue))
                             }
                             
-                            if let msgId = payload["msg_id"] {
-                                let msgIdValue = msgId as! NSString
-                                if let peerId = peerId {
-                                    notificationRequestId = .messageId(MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: Int32(msgIdValue.intValue)))
-                                }
+                            if let msgId = payload["msg_id"], let msgIdValue = notificationInt64(msgId), let messageId = Int32(exactly: msgIdValue), let peerId = peerId {
+                                notificationRequestId = .messageId(MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: messageId))
                             }
                             
                             if let notificationRequestId = notificationRequestId {
@@ -3238,6 +3232,25 @@ private func accountIdFromNotification(_ notification: UNNotification, sharedCon
 }
 
 @available(iOS 10.0, *)
+private func notificationInt64(_ value: Any) -> Int64? {
+    if let value = value as? Int64 {
+        return value
+    } else if let value = value as? Int32 {
+        return Int64(value)
+    } else if let value = value as? Int {
+        return Int64(value)
+    } else if let value = value as? NSNumber {
+        return value.int64Value
+    } else if let value = value as? String {
+        return Int64(value)
+    } else if let value = value as? NSString {
+        return Int64(value as String)
+    } else {
+        return nil
+    }
+}
+
+@available(iOS 10.0, *)
 private func peerIdFromNotification(_ notification: UNNotification) -> (peerId: PeerId, threadId: Int64?)? {
     let threadId = notification.request.content.userInfo["threadId"] as? Int64
     
@@ -3248,18 +3261,14 @@ private func peerIdFromNotification(_ notification: UNNotification) -> (peerId: 
     } else {
         let payload = notification.request.content.userInfo
         var peerId: PeerId?
-        if let fromId = payload["from_id"] {
-            let fromIdValue = fromId as! NSString
-            peerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(Int64(fromIdValue as String) ?? 0))
-        } else if let fromId = payload["chat_id"] {
-            let fromIdValue = fromId as! NSString
-            peerId = PeerId(namespace: Namespaces.Peer.CloudGroup, id: PeerId.Id._internalFromInt64Value(Int64(fromIdValue as String) ?? 0))
-        } else if let fromId = payload["channel_id"] {
-            let fromIdValue = fromId as! NSString
-            peerId = PeerId(namespace: Namespaces.Peer.CloudChannel, id: PeerId.Id._internalFromInt64Value(Int64(fromIdValue as String) ?? 0))
-        } else if let fromId = payload["encryption_id"] {
-            let fromIdValue = fromId as! NSString
-            peerId = PeerId(namespace: Namespaces.Peer.SecretChat, id: PeerId.Id._internalFromInt64Value(Int64(fromIdValue as String) ?? 0))
+        if let fromId = payload["from_id"], let fromIdValue = notificationInt64(fromId) {
+            peerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(fromIdValue))
+        } else if let fromId = payload["chat_id"], let fromIdValue = notificationInt64(fromId) {
+            peerId = PeerId(namespace: Namespaces.Peer.CloudGroup, id: PeerId.Id._internalFromInt64Value(fromIdValue))
+        } else if let fromId = payload["channel_id"], let fromIdValue = notificationInt64(fromId) {
+            peerId = PeerId(namespace: Namespaces.Peer.CloudChannel, id: PeerId.Id._internalFromInt64Value(fromIdValue))
+        } else if let fromId = payload["encryption_id"], let fromIdValue = notificationInt64(fromId) {
+            peerId = PeerId(namespace: Namespaces.Peer.SecretChat, id: PeerId.Id._internalFromInt64Value(fromIdValue))
         }
         
         if let peerId = peerId {
@@ -3276,18 +3285,16 @@ private func messageIdFromNotification(peerId: PeerId, notification: UNNotificat
         return MessageId(peerId: peerId, namespace: messageIdNamespace, id: messageIdId)
     }
     
-    if let msgId = payload["msg_id"] {
-        let msgIdValue = msgId as! NSString
-        return MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: Int32(msgIdValue.intValue))
+    if let msgId = payload["msg_id"], let msgIdValue = notificationInt64(msgId), let messageId = Int32(exactly: msgIdValue) {
+        return MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: messageId)
     }
     return nil
 }
 
 private func storyIdFromNotification(peerId: PeerId, notification: UNNotification) -> StoryId? {
     let payload = notification.request.content.userInfo
-    if let storyId = payload["story_id"] {
-        let storyIdValue = storyId as! NSString
-        return StoryId(peerId: peerId, id: Int32(storyIdValue.intValue))
+    if let storyId = payload["story_id"], let storyIdValue = notificationInt64(storyId), let storyId = Int32(exactly: storyIdValue) {
+        return StoryId(peerId: peerId, id: storyId)
     }
     return nil
 }
