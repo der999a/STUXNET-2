@@ -13,6 +13,7 @@ import PresentationDataUtils
 private final class MiraFakeMessageState {
     var text: String = ""
     var oneMessagePerLine: Bool = false
+    var conversationMode: Bool = false
     var outgoing: Bool = false
     var sender: String = ""
     var datePreset: Int = 0
@@ -37,6 +38,7 @@ private final class MiraFakeMessageControllerArguments {
 private enum MiraFakeMessageEntry: ItemListNodeEntry {
     case input(String)
     case batchMode(Bool)
+    case conversationMode(Bool)
     case directionHeader
     case fromThem(Bool)
     case fromMe(Bool)
@@ -51,7 +53,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
 
     var section: ItemListSectionId {
         switch self {
-        case .input, .batchMode:
+        case .input, .batchMode, .conversationMode:
             return 0
         case .directionHeader, .fromThem, .fromMe, .senderHeader, .senderInput:
             return 1
@@ -68,28 +70,30 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
             return 0
         case .batchMode:
             return 1
-        case .directionHeader:
+        case .conversationMode:
             return 2
-        case .fromThem:
+        case .directionHeader:
             return 3
-        case .fromMe:
+        case .fromThem:
             return 4
-        case .senderHeader:
+        case .fromMe:
             return 5
-        case .senderInput:
+        case .senderHeader:
             return 6
-        case .dateHeader:
+        case .senderInput:
             return 7
+        case .dateHeader:
+            return 8
         case let .preset(index, _, _):
-            return 8 + index
+            return 9 + index
         case .exactDatePicker:
-            return 8 + miraFakeMessageDatePresets.count
-        case .exactSeconds:
             return 9 + miraFakeMessageDatePresets.count
-        case .customDays:
+        case .exactSeconds:
             return 10 + miraFakeMessageDatePresets.count
-        case .hint:
+        case .customDays:
             return 11 + miraFakeMessageDatePresets.count
+        case .hint:
+            return 12 + miraFakeMessageDatePresets.count
         }
     }
 
@@ -110,6 +114,14 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
         case let .batchMode(value):
             return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "One message per line", value: value, sectionId: self.section, style: .blocks, updated: { value in
                 arguments.state.oneMessagePerLine = value
+                arguments.updated()
+            })
+        case let .conversationMode(value):
+            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "Conversation script", value: value, sectionId: self.section, style: .blocks, updated: { value in
+                arguments.state.conversationMode = value
+                if value {
+                    arguments.state.oneMessagePerLine = true
+                }
                 arguments.updated()
             })
         case .directionHeader:
@@ -247,6 +259,28 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
 
         let addMessages: (EnginePeer?, String?) -> Void = { author, fallbackName in
             isResolvingSender = false
+            if state.conversationMode {
+                let scriptedMessages: [(text: String, date: Int32, outgoing: Bool)] = texts.enumerated().compactMap { index, rawText in
+                    var text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    var messageOutgoing = outgoing
+                    let prefixes: [(String, Bool)] = [("me:", true), ("you:", true), ("out:", true), ("[me]", true), ("them:", false), ("in:", false), ("from them:", false), ("[them]", false)]
+                    for (prefix, value) in prefixes where text.lowercased().hasPrefix(prefix) {
+                        text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                        messageOutgoing = value
+                        break
+                    }
+                    guard !text.isEmpty else { return nil }
+                    let date = miraClampedMessageTimestamp(Int64(baseDate) - Int64(texts.count - 1 - index))
+                    return (text, date, messageOutgoing)
+                }
+                let _ = (context.engine.messages.miraAddFakeConversationMessages(peerId: peerId, messages: scriptedMessages, authorPeerId: author?.id, authorName: author?.compactDisplayTitle ?? fallbackName)
+                |> deliverOnMainQueue).start(completed: {
+                    state.isSubmitting = false
+                    arguments.updated()
+                    dismissImpl?()
+                })
+                return
+            }
             func insertBatch(startIndex: Int) {
                 let endIndex = min(startIndex + miraFakeMessageTransactionBatchSize, texts.count)
                 let messages: [(text: String, date: Int32)] = (startIndex ..< endIndex).map { index in
@@ -324,6 +358,7 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
         var entries: [MiraFakeMessageEntry] = []
         entries.append(.input(state.text))
         entries.append(.batchMode(state.oneMessagePerLine))
+        entries.append(.conversationMode(state.conversationMode))
         entries.append(.directionHeader)
         entries.append(.fromThem(!state.outgoing))
         entries.append(.fromMe(state.outgoing))
@@ -349,7 +384,8 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
             pendingCount = state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : 1
         }
         let countHint = pendingCount > 0 ? " Ready to add \(pendingCount) local message\(pendingCount == 1 ? "" : "s")." : ""
-        entries.append(.hint("Messages stay on this device and are never sent to the server. \(state.oneMessagePerLine ? "Each non-empty line becomes a separate message." : "")\(countHint)"))
+        let scriptHint = state.conversationMode ? "Conversation mode accepts me:/you:/them:/in: prefixes per line." : ""
+        entries.append(.hint("Messages stay on this device and are never sent to the server. \(state.oneMessagePerLine ? "Each non-empty line becomes a separate message." : "") \(scriptHint)\(countHint)"))
 
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
 

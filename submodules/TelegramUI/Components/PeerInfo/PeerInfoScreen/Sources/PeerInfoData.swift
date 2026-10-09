@@ -1241,10 +1241,6 @@ func peerInfoScreenData(
                         return .none
                     }
                     if user.id == context.account.peerId {
-                        let miraSettings = context.sharedContext.immediateMiraSettings
-                        if miraSettings.showLocalOnline {
-                            return .none
-                        }
                         guard let presence = view.peerPresences[userPeerId] as? TelegramUserPresence else {
                             return .none
                         }

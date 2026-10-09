@@ -608,6 +608,14 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
             gift.fromPeerId = senderId.toInt64()
             gift.fromPeerIdIsPacked = true
             gift.fromName = state.selectedSenderName
+        } else if let existingGift, let existingSenderId = existingGift.fromPeerId,
+                  state.fromText == String(existingSenderId) {
+            // Preserve unchanged stored sender ids in their original format.
+            // Legacy entries can be raw or packed; resolving the displayed
+            // number again as a raw user id can corrupt a packed sender.
+            gift.fromPeerId = existingSenderId
+            gift.fromPeerIdIsPacked = existingGift.fromPeerIdIsPacked
+            gift.fromName = existingGift.fromName
         }
         switch state.kind {
         case .regular:

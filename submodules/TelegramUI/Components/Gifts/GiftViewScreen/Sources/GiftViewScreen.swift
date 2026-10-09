@@ -104,6 +104,19 @@ private final class GiftViewSheetContent: CombinedComponent {
         
         var peerMap: [EnginePeer.Id: EnginePeer] = [:]
         var starGiftsMap: [Int64: StarGift.Gift] = [:]
+
+        /// Fake gifts are local profile projections. Their sender row should
+        /// open the sender's profile, while real Telegram gifts keep their
+        /// normal chat navigation.
+        var opensFakeGiftSenderProfile: Bool {
+            guard let arguments = self.subject.arguments,
+                  let reference = arguments.reference,
+                  case let .peer(peerId, savedId) = reference,
+                  peerId == self.context.account.peerId else {
+                return false
+            }
+            return MiraFakeGift.isLocalSavedId(savedId)
+        }
         
         var cachedStarImage: (UIImage, PresentationTheme)?
         var cachedSmallStarImage: (UIImage, PresentationTheme)?
@@ -3880,7 +3893,7 @@ private final class GiftViewSheetContent: CombinedComponent {
                                                 )
                                             ),
                                             action: { [weak state] in
-                                                state?.openPeer(peer)
+                                                state?.openPeer(peer, gifts: state?.opensFakeGiftSenderProfile ?? false)
                                             }
                                         ))
                                     ),
@@ -3910,7 +3923,7 @@ private final class GiftViewSheetContent: CombinedComponent {
                                     )
                                 ),
                                 action: { [weak state] in
-                                    state?.openPeer(peer)
+                                    state?.openPeer(peer, gifts: state?.opensFakeGiftSenderProfile ?? false)
                                 }
                             ))
                         }
@@ -5456,21 +5469,40 @@ final class GiftViewSheetComponent: CombinedComponent {
                                     guard let peer, let navigationController else {
                                         return
                                     }
-                                    context.sharedContext.navigateToChatController(NavigateToChatControllerParams(
-                                        navigationController: navigationController,
-                                        chatController: nil,
+                                    let isLocalFakeGift: Bool = {
+                                        guard let reference = arguments.reference,
+                                              case let .peer(referencePeerId, savedId) = reference else {
+                                            return false
+                                        }
+                                        return referencePeerId == context.account.peerId && MiraFakeGift.isLocalSavedId(savedId)
+                                    }()
+                                    if isLocalFakeGift, let profileController = context.sharedContext.makePeerInfoController(
                                         context: context,
-                                        chatLocation: .peer(peer),
-                                        subject: nil,
-                                        botStart: nil,
-                                        updateTextInputState: nil,
-                                        keepStack: .always,
-                                        useExisting: true,
-                                        purposefulAction: nil,
-                                        scrollToEndIfExists: false,
-                                        activateMessageSearch: nil,
-                                        animated: true
-                                    ))
+                                        updatedPresentationData: nil,
+                                        peer: peer,
+                                        mode: .gifts,
+                                        avatarInitiallyExpanded: false,
+                                        fromChat: false,
+                                        requestsContext: nil
+                                    ) {
+                                        navigationController.pushViewController(profileController, animated: true)
+                                    } else {
+                                        context.sharedContext.navigateToChatController(NavigateToChatControllerParams(
+                                            navigationController: navigationController,
+                                            chatController: nil,
+                                            context: context,
+                                            chatLocation: .peer(peer),
+                                            subject: nil,
+                                            botStart: nil,
+                                            updateTextInputState: nil,
+                                            keepStack: .always,
+                                            useExisting: true,
+                                            purposefulAction: nil,
+                                            scrollToEndIfExists: false,
+                                            activateMessageSearch: nil,
+                                            animated: true
+                                        ))
+                                    }
                                 })
                             }
                         })

@@ -621,6 +621,10 @@ extension MiraFakeGiftsStore {
                     entry.chatMessagePeerId = messageId.peerId.toInt64()
                     entry.chatMessageId = messageId.id
                 }
+                if chatPeerId.namespace == Namespaces.Peer.CloudUser,
+                   case .notIncluded = transaction.getPeerChatListInclusion(chatPeerId) {
+                    transaction.updatePeerChatListInclusion(chatPeerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
+                }
                 return entry
             }
         }

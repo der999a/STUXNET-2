@@ -1257,8 +1257,7 @@ final class PeerInfoHeaderNode: ASDisplayNode {
                 let subtitleColor: UIColor
                 subtitleColor = .white
 
-                let miraSettings = self.context.sharedContext.immediateMiraSettings
-                if !miraSettings.showLocalOnline, let statusData = statusData {
+                if let statusData = statusData {
                     subtitleStringText = statusData.text
                 } else {
                     subtitleStringText = presentationData.strings.Presence_online
