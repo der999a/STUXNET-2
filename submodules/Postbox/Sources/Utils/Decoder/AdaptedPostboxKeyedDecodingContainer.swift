@@ -22,7 +22,7 @@ private func decodingErrorBreakpoint() {
 
 extension _AdaptedPostboxDecoder.KeyedContainer: KeyedDecodingContainerProtocol {
     var allKeys: [Key] {
-        preconditionFailure()
+        return self.decoder.allKeys.compactMap { Key(stringValue: $0) }
     }
     
     func contains(_ key: Key) -> Bool {

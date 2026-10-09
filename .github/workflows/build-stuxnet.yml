@@ -100,6 +100,9 @@ jobs:
           fi
           echo "XCODE_OVERRIDE_FLAG=$OVERRIDE" >> "$GITHUB_ENV"
 
+      - name: Exercise every settings toggle through the production codec
+        run: python3 build-system/tests/test_mira_settings_codec.py
+
       - name: Restore Bazel disk cache and toolchain
         id: bazel-cache
         uses: actions/cache/restore@v4

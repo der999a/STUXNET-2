@@ -755,6 +755,40 @@ public final class PostboxDecoder {
     public init(buffer: MemoryBuffer) {
         self.buffer = buffer
     }
+
+    /// Enumerates the keyed fields without changing the decoder's read cursor.
+    /// Codable dictionaries use this even when the dictionary is empty.
+    var allKeys: [String] {
+        let bytes = self.buffer.memory.assumingMemoryBound(to: Int8.self)
+        let length = self.buffer.length
+        var cursor = 0
+        var result: [String] = []
+        while cursor < length {
+            let keyLength = Int(bytes[cursor])
+            cursor += 1
+            guard keyLength >= 0, keyLength < length - cursor else {
+                break
+            }
+            let keyData = Data(bytes: bytes + cursor, count: keyLength)
+            cursor += keyLength
+            guard let valueType = ValueType(rawValue: bytes[cursor]) else {
+                break
+            }
+            cursor += 1
+            // Object values have both a type hash and a length header.
+            if valueType == .Object && length - cursor < 8 {
+                break
+            }
+            let valueOffset = cursor
+            guard PostboxDecoder.skipValue(bytes, offset: &cursor, length: length, valueType: valueType), cursor >= valueOffset, cursor <= length else {
+                break
+            }
+            if let key = String(data: keyData, encoding: .utf8) {
+                result.append(key)
+            }
+        }
+        return result
+    }
     
     private class func skipValue(_ bytes: UnsafePointer<Int8>, offset: inout Int, length: Int, valueType: ValueType) -> Bool {
         switch valueType {

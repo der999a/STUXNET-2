@@ -1,0 +1,13 @@
+name: Mira runtime regressions
+on:
+  workflow_dispatch:
+jobs:
+  settings-and-stores:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exercise every settings toggle through the production codec
+        run: python3 build-system/tests/test_mira_settings_codec.py
+      - name: Exercise local store callbacks and persistence
+        run: python3 build-system/tests/test_mira_stores.py
