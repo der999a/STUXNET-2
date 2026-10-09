@@ -721,7 +721,14 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         }
         currentOverlay?.dismiss()
         currentOverlay = nil
-        controller?.dismiss()
+        guard let controller else {
+            return
+        }
+        if let navigationController = controller.navigationController as? NavigationController, navigationController.topViewController === controller {
+            navigationController.popViewController(animated: true)
+        } else {
+            controller.dismiss()
+        }
     }
     return controller
 }
@@ -849,7 +856,14 @@ private func stuxnetFakeGiftPickerController(context: AccountContext, currentGif
 
     let controller = ItemListController(context: context, state: signal)
     dismissImpl = { [weak controller] in
-        controller?.dismiss()
+        guard let controller else {
+            return
+        }
+        if let navigationController = controller.navigationController as? NavigationController, navigationController.topViewController === controller {
+            navigationController.popViewController(animated: true)
+        } else {
+            controller.dismiss()
+        }
     }
     return controller
 }
@@ -947,7 +961,14 @@ private func stuxnetFakeGiftDatePickerController(context: AccountContext, curren
 
     let controller = ItemListController(context: context, state: signal)
     dismissImpl = { [weak controller] in
-        controller?.dismiss()
+        guard let controller else {
+            return
+        }
+        if let navigationController = controller.navigationController as? NavigationController, navigationController.topViewController === controller {
+            navigationController.popViewController(animated: true)
+        } else {
+            controller.dismiss()
+        }
     }
     return controller
 }
