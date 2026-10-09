@@ -316,10 +316,18 @@ public final class AvatarNode: ASDisplayNode {
     }
     
     // Stuxnet: avatar corner override. 0 = default (circle), 1 = rounded square, 2 = square.
-    // Assign from the main queue only (wired to the miraSettings subscription in
-    // SharedAccountContext.swift). Already-rendered/cached avatar images are not
+    // Avatar rendering reads this from background queues as settings change.
+    // Already-rendered/cached avatar images are not
     // invalidated; existing avatars pick up the new style on their next render.
-    public static var miraCornerStyle: Int32 = 0
+    private static let miraCornerStyleValue = Atomic<Int32>(value: 0)
+    public static var miraCornerStyle: Int32 {
+        get {
+            return self.miraCornerStyleValue.with { $0 }
+        }
+        set {
+            let _ = self.miraCornerStyleValue.swap(newValue)
+        }
+    }
     
     static func miraAddRoundClipPath(context: CGContext, rect: CGRect) {
         switch AvatarNode.miraCornerStyle {

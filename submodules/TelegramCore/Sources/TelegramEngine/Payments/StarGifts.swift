@@ -1917,8 +1917,8 @@ private final class ProfileGiftsContextImpl {
 
         if collectionId == nil, peerId == account.peerId {
             self.fakeGiftsDisposable.set((account.miraFakeGiftsStore.changes
-            |> mapToSignal { _ -> Signal<[ProfileGiftsContext.State.StarGift], NoError> in
-                return account.miraFakeGiftsStore.resolvedProfileGifts(account: account)
+            |> mapToSignal { entries -> Signal<[ProfileGiftsContext.State.StarGift], NoError> in
+                return account.miraFakeGiftsStore.resolvedProfileGifts(account: account, entries: entries)
             }
             |> deliverOn(self.queue)).start(next: { [weak self] gifts in
                 guard let self else {
@@ -2298,9 +2298,7 @@ private final class ProfileGiftsContextImpl {
         self.pushState()
         
         let pinnedReferences = pinnedGifts.compactMap { $0.reference }
-        var signal: Signal<Never, NoError> = pinnedReferences.isEmpty
-            ? .complete()
-            : _internal_updateStarGiftsPinnedToTop(account: self.account, peerId: self.peerId, references: pinnedReferences)
+        var signal: Signal<Never, NoError> = _internal_updateStarGiftsPinnedToTop(account: self.account, peerId: self.peerId, references: pinnedReferences)
         if !saveSignals.isEmpty {
             signal = combineLatest(saveSignals)
             |> ignoreValues
@@ -3836,8 +3834,14 @@ extension StarGiftReference {
     func apiStarGiftReference(transaction: Transaction) -> Api.InputSavedStarGift? {
         switch self {
         case let .message(messageId):
+            guard messageId.namespace == Namespaces.Message.Cloud else {
+                return nil
+            }
             return .inputSavedStarGiftUser(.init(msgId: messageId.id))
         case let .peer(peerId, id):
+            guard !MiraFakeGift.isLocalSavedId(id) else {
+                return nil
+            }
             guard let inputPeer = transaction.getPeer(peerId).flatMap({ apiInputPeer($0) }) else {
                 return nil
             }

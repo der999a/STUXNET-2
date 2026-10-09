@@ -228,47 +228,64 @@ public extension TelegramEngine {
         }
 
         public func miraAddFakeMessage(peerId: PeerId, text: String, outgoing: Bool, date: Int32, authorPeerId: PeerId? = nil, authorName: String? = nil) -> Signal<Void, NoError> {
+            return self.miraAddFakeMessages(peerId: peerId, messages: [(text, date)], outgoing: outgoing, authorPeerId: authorPeerId, authorName: authorName)
+        }
+
+        public func miraAddFakeMessages(peerId: PeerId, messages: [(text: String, date: Int32)], outgoing: Bool, authorPeerId: PeerId? = nil, authorName: String? = nil) -> Signal<Void, NoError> {
+            guard !messages.isEmpty else {
+                return .complete()
+            }
             let account = self.account
-            var record = FakeMessageRecord(messagePeerId: peerId.toInt64(), text: text, date: date, outgoing: outgoing, authorPeerId: outgoing ? nil : authorPeerId?.toInt64(), authorName: outgoing ? nil : authorName)
             return account.postbox.transaction { transaction -> Void in
-                var flags = StoreMessageFlags()
-                if !outgoing {
-                    flags.insert(.Incoming)
+                var records: [FakeMessageRecord] = []
+                var storeMessages: [StoreMessage] = []
+                records.reserveCapacity(messages.count)
+                storeMessages.reserveCapacity(messages.count)
+                for entry in messages {
+                    let record = FakeMessageRecord(messagePeerId: peerId.toInt64(), text: entry.text, date: entry.date, outgoing: outgoing, authorPeerId: outgoing ? nil : authorPeerId?.toInt64(), authorName: outgoing ? nil : authorName)
+                    var flags = StoreMessageFlags()
+                    if !outgoing {
+                        flags.insert(.Incoming)
+                    }
+                    let authorId: PeerId = outgoing ? account.peerId : (authorPeerId ?? peerId)
+                    let message = StoreMessage(
+                        peerId: peerId,
+                        namespace: Namespaces.Message.Local,
+                        customStableId: nil,
+                        globallyUniqueId: record.stableUniqueId,
+                        groupingKey: nil,
+                        threadId: nil,
+                        timestamp: entry.date,
+                        flags: flags,
+                        tags: [],
+                        globalTags: [],
+                        localTags: [],
+                        forwardInfo: nil,
+                        authorId: authorId,
+                        text: entry.text,
+                        attributes: [],
+                        media: []
+                    )
+                    records.append(record)
+                    storeMessages.append(message)
                 }
-                let authorId: PeerId = outgoing ? account.peerId : (authorPeerId ?? peerId)
-                let message = StoreMessage(
-                    peerId: peerId,
-                    namespace: Namespaces.Message.Local,
-                    customStableId: nil,
-                    globallyUniqueId: record.stableUniqueId,
-                    groupingKey: nil,
-                    threadId: nil,
-                    timestamp: date,
-                    flags: flags,
-                    tags: [],
-                    globalTags: [],
-                    localTags: [],
-                    forwardInfo: nil,
-                    authorId: authorId,
-                    text: text,
-                    attributes: [],
-                    media: []
-                )
-                let mapping = transaction.addMessages([message], location: .Random)
-                if let messageId = mapping[record.stableUniqueId] {
-                    record.messageId = messageId.id
-                    record.messageNamespace = messageId.namespace
-                    record.messagePeerId = messageId.peerId.toInt64()
+                let mapping = transaction.addMessages(storeMessages, location: .Random)
+                for index in records.indices {
+                    if let messageId = mapping[records[index].stableUniqueId] {
+                        records[index].messageId = messageId.id
+                        records[index].messageNamespace = messageId.namespace
+                        records[index].messagePeerId = messageId.peerId.toInt64()
+                    }
                 }
-                account.miraMessageHistoryStore.addFakeMessage(record)
+                account.miraMessageHistoryStore.addFakeMessages(records)
             }
         }
 
         public func miraRemoveFakeMessage(id: String) -> Signal<Void, NoError> {
             let account = self.account
             return account.postbox.transaction { transaction -> Void in
-                if let record = account.miraMessageHistoryStore.fakeMessage(id: id), record.messageId != 0 {
-                    transaction.deleteMessages([MessageId(peerId: PeerId(record.messagePeerId), namespace: record.messageNamespace, id: record.messageId)], forEachMedia: nil)
+                if let record = account.miraMessageHistoryStore.fakeMessage(id: id), record.messageId != 0, record.messageNamespace == Namespaces.Message.Local, let peerId = MiraMessageHistoryStore.peerId(fromPackedValue: record.messagePeerId) {
+                    transaction.deleteMessages([MessageId(peerId: peerId, namespace: record.messageNamespace, id: record.messageId)], forEachMedia: nil)
                 }
                 account.miraMessageHistoryStore.removeFakeMessage(id: id)
             }
@@ -280,10 +297,10 @@ public extension TelegramEngine {
             let ids = records.map { $0.id }
             return account.postbox.transaction { transaction -> Void in
                 let messageIds = records.compactMap { record -> MessageId? in
-                    guard record.messageId != 0 else {
+                    guard record.messageId != 0, record.messageNamespace == Namespaces.Message.Local, let peerId = MiraMessageHistoryStore.peerId(fromPackedValue: record.messagePeerId) else {
                         return nil
                     }
-                    return MessageId(peerId: PeerId(record.messagePeerId), namespace: record.messageNamespace, id: record.messageId)
+                    return MessageId(peerId: peerId, namespace: record.messageNamespace, id: record.messageId)
                 }
                 if !messageIds.isEmpty {
                     transaction.deleteMessages(messageIds, forEachMedia: nil)

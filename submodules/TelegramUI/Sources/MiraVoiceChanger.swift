@@ -180,7 +180,6 @@ private struct MiraVoiceChangerEffectParams {
 public enum MiraVoiceChanger {
     private static let sampleRate: Double = 48000.0
     private static let encoderFrameSize = 960
-    private static let maximumProcessingDuration: Double = 5.0 * 60.0
 
     public static func miraProcessVoiceMessage(sourceURL: URL, preset: Int32, completion: @escaping (URL?) -> Void) {
         miraProcessVoiceMessageDetailed(sourceURL: sourceURL, preset: preset, completion: { result in
@@ -255,14 +254,15 @@ public enum MiraVoiceChanger {
             buffer.deallocate()
         }
         var samples: [Int16] = []
-        let maximumSampleCount = Int(sampleRate * maximumProcessingDuration)
         while true {
-            let count = reader.read(buffer, bufSize: Int32(capacity * MemoryLayout<Int16>.size))
+            // OggOpusReader passes bufSize directly to op_read(), where it
+            // denotes Int16 elements rather than bytes.
+            let count = reader.read(buffer, bufSize: Int32(capacity))
             if count <= 0 {
                 break
             }
             let sampleCount = Int(count)
-            guard sampleCount <= capacity, sampleCount <= maximumSampleCount - samples.count else {
+            guard sampleCount <= capacity, samples.count <= Int.max - sampleCount else {
                 return nil
             }
             samples.append(contentsOf: UnsafeBufferPointer(start: buffer, count: sampleCount))

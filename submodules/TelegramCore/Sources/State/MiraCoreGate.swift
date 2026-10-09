@@ -53,6 +53,12 @@ public final class MiraCoreGate {
         }
     }
 
+    /// Replaces the active account set so logged-out accounts cannot leave a
+    /// stale override behind for a later login.
+    public func replaceAccountSnapshots(_ snapshots: [PeerId: MiraCoreGateSnapshot]) {
+        let _ = self.accountValues.swap(snapshots)
+    }
+
     /// Resolves the effective snapshot for an account without changing the
     /// process-wide legacy snapshot used by older call sites.
     public func snapshot(forAccountPeerId accountPeerId: PeerId?) -> MiraCoreGateSnapshot {

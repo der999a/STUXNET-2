@@ -110,6 +110,35 @@ public struct MiraFakeGift: Codable, Equatable {
         }
         return Int64(bitPattern: (hash & 0x0000ffffffffffff) | 0x1111000000000000)
     }
+
+    public static func isLocalSavedId(_ id: Int64) -> Bool {
+        return UInt64(bitPattern: id) & 0xffff000000000000 == 0x1111000000000000
+    }
+
+    /// Settings historically persisted a raw Telegram user id while newer
+    /// entries may contain the packed PeerId value. Normalize both forms
+    /// before looking up a sender so malformed values never reach PeerId's
+    /// packed initializer in the message/profile projection.
+    public static func peerId(fromStoredValue value: Int64) -> PeerId? {
+        guard value > 0 else {
+            return nil
+        }
+        if value <= Int64(Int32.max) {
+            return PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(value))
+        }
+        let bits = UInt64(bitPattern: value)
+        let namespaceBits = UInt32((bits >> 32) & 0x7)
+        let namespace = PeerId.Namespace._internalFromInt32Value(Int32(bitPattern: namespaceBits))
+        guard namespace == Namespaces.Peer.CloudUser || namespace == Namespaces.Peer.CloudGroup || namespace == Namespaces.Peer.CloudChannel || namespace == Namespaces.Peer.SecretChat else {
+            return nil
+        }
+        let idBits = ((bits >> 35) << 32) | (bits & 0xffffffff)
+        let idValue = Int64(bitPattern: idBits)
+        guard idValue >= -0x007fffffffffffff && idValue <= 0x00ffffffffffffff else {
+            return nil
+        }
+        return PeerId(namespace: namespace, id: PeerId.Id._internalFromInt64Value(idValue))
+    }
 }
 
 public final class MiraFakeGiftsStore {
@@ -129,11 +158,22 @@ public final class MiraFakeGiftsStore {
     }
 
     private let queue = DispatchQueue(label: "org.telegram.mira.fakeGiftsStore", qos: .utility)
+    // ValuePromise delivers synchronously on the thread that calls `set`. Never
+    // publish while holding `queue`: subscribers commonly call `list()` from
+    // their callback, and that would synchronously wait on this queue again.
+    private let publicationQueue = DispatchQueue(label: "org.telegram.mira.fakeGiftsStore.publication", qos: .utility)
     private let filePath: String
     private var cache: [MiraFakeGift] = []
     private var didLoad = false
 
     private let changesPromise = ValuePromise<[MiraFakeGift]>([], ignoreRepeated: true)
+
+    private func publishLocked() {
+        let snapshot = self.cache
+        self.publicationQueue.async { [weak self] in
+            self?.changesPromise.set(snapshot)
+        }
+    }
 
     public init(basePath: String) {
         self.filePath = basePath + "/mira-fake-gifts.json"
@@ -163,7 +203,7 @@ public final class MiraFakeGiftsStore {
                 self.saveLocked()
             }
         }
-        self.changesPromise.set(self.cache)
+        self.publishLocked()
     }
 
     private func saveLocked() {
@@ -215,7 +255,7 @@ public final class MiraFakeGiftsStore {
                 self.cache.append(gift)
             }
             self.saveLocked()
-            self.changesPromise.set(self.cache)
+            self.publishLocked()
         }
     }
 
@@ -224,7 +264,7 @@ public final class MiraFakeGiftsStore {
             self.loadIfNeeded()
             self.cache.removeAll(where: { $0.id == id })
             self.saveLocked()
-            self.changesPromise.set(self.cache)
+            self.publishLocked()
         }
     }
 
@@ -234,7 +274,7 @@ public final class MiraFakeGiftsStore {
             if let index = self.cache.firstIndex(where: { $0.id == id }), self.cache[index].giftSnapshot == nil {
                 self.cache[index].giftSnapshot = snapshot
                 self.saveLocked()
-                self.changesPromise.set(self.cache)
+                self.publishLocked()
             }
         }
     }
@@ -246,10 +286,9 @@ public final class MiraFakeGiftsStore {
         guard case let .peer(peerId, savedId) = reference, peerId == accountPeerId else {
             return false
         }
-        return self.queue.sync {
-            self.loadIfNeeded()
-            return self.cache.contains(where: { $0.stableSavedId == savedId })
-        }
+        // Keep stale references local after deletion as well: an already-open
+        // gift sheet must not send its synthetic id to the payments API.
+        return MiraFakeGift.isLocalSavedId(savedId)
     }
 
     /// Applies a local profile change without touching the network.
@@ -280,15 +319,16 @@ public final class MiraFakeGiftsStore {
             }
             self.cache[index] = gift
             self.saveLocked()
-            self.changesPromise.set(self.cache)
+            self.publishLocked()
         }
     }
 
     public func clear() {
         self.queue.async {
+            self.didLoad = true
             self.cache.removeAll()
             try? FileManager.default.removeItem(atPath: self.filePath)
-            self.changesPromise.set(self.cache)
+            self.publishLocked()
         }
     }
 
@@ -314,7 +354,10 @@ public final class MiraFakeGiftsStore {
 
 extension MiraFakeGiftsStore {
     public func resolvedProfileGifts(account: Account) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
-        let entries = self.list()
+        return self.resolvedProfileGifts(account: account, entries: self.list())
+    }
+
+    public func resolvedProfileGifts(account: Account, entries: [MiraFakeGift]) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
         if entries.isEmpty {
             return .single([])
         }
@@ -367,8 +410,8 @@ extension MiraFakeGiftsStore {
             }
             return account.postbox.transaction { transaction -> ProfileGiftsContext.State.StarGift in
                 var fromPeer: EnginePeer?
-                if let fromPeerId = entry.fromPeerId {
-                    fromPeer = transaction.getPeer(EnginePeer.Id(fromPeerId)).flatMap { EnginePeer($0) }
+                if let fromPeerId = entry.fromPeerId, let normalizedPeerId = MiraFakeGift.peerId(fromStoredValue: fromPeerId) {
+                    fromPeer = transaction.getPeer(normalizedPeerId).flatMap { EnginePeer($0) }
                 }
 
                 // A gift sender is rendered as a user in Telegram's gift
@@ -439,8 +482,8 @@ extension MiraFakeGiftsStore {
             var entry = entry
             return account.postbox.transaction { transaction -> MiraFakeGift in
                 var fromPeer: EnginePeer?
-                if let fromPeerId = entry.fromPeerId {
-                    fromPeer = transaction.getPeer(EnginePeer.Id(fromPeerId)).flatMap { EnginePeer($0) }
+                if let fromPeerId = entry.fromPeerId, let normalizedPeerId = MiraFakeGift.peerId(fromStoredValue: fromPeerId) {
+                    fromPeer = transaction.getPeer(normalizedPeerId).flatMap { EnginePeer($0) }
                 }
 
                 if let resolvedFromPeer = fromPeer {

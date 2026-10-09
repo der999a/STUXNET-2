@@ -254,6 +254,9 @@ private struct StuxnetAddFakeGiftState: Equatable {
     var fromText: String = ""
     var captionText: String = ""
     var datePreset: StuxnetFakeGiftDatePreset = .now
+    // Preserve an edited gift's exact timestamp until the user explicitly
+    // chooses another date preset.
+    var exactTimestamp: Int32?
     var isHidden: Bool = false
     var isSaved: Bool = false
     var showInChat: Bool = false
@@ -445,6 +448,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         state.fromText = existingGift.fromPeerId.flatMap { "\($0)" } ?? existingGift.fromName ?? ""
         state.captionText = existingGift.caption ?? ""
         state.datePreset = StuxnetFakeGiftDatePreset.from(timestamp: existingGift.date)
+        state.exactTimestamp = existingGift.date
         state.isHidden = existingGift.isHidden
         state.isSaved = existingGift.isSaved
         state.showInChat = existingGift.showInChat
@@ -463,8 +467,10 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
     var pushControllerImpl: ((ViewController) -> Void)?
     var presentControllerImpl: ((ViewController) -> Void)?
     var dismissImpl: (() -> Void)?
+    var didDelete = false
     var currentPresentationData: PresentationData = context.sharedContext.currentPresentationData.with { $0 }
     var currentOverlay: ViewController?
+    let operationDisposable = MetaDisposable()
 
     let store = context.account.miraFakeGiftsStore
 
@@ -481,16 +487,22 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
             }
         }
         let _ = (sync |> deliverOnMainQueue).start(next: { updatedGift in
+            guard !didDelete else {
+                return
+            }
             // Upsert keeps a fast edit/insert sequence idempotent even when the
             // previous chat-message deletion finishes after the settings write.
             store.upsert(updatedGift)
+            updateState { $0.isSaving = false }
             dismissImpl?()
         })
     }
 
-    let resolveFromAndSave: (MiraFakeGift) -> Void = { gift in
+    let resolveFromAndSave: (MiraFakeGift, String) -> Void = { gift, senderText in
         var gift = gift
-        let fromText = currentState.fromText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Use the snapshot captured by Save. Reading currentState here lets a
+        // later keystroke change the sender while an NFT lookup is in flight.
+        let fromText = senderText.trimmingCharacters(in: .whitespacesAndNewlines)
         if fromText.isEmpty {
             persistAndSync(gift)
             return
@@ -518,8 +530,11 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         let overlay = OverlayStatusController(theme: currentPresentationData.theme, type: .loading(cancelled: nil))
         presentControllerImpl?(overlay)
         currentOverlay = overlay
-        let _ = (context.engine.peers.resolvePeerByName(name: name, referrer: nil)
+        operationDisposable.set((context.engine.peers.resolvePeerByName(name: name, referrer: nil)
         |> deliverOnMainQueue).start(next: { result in
+            guard !didDelete else {
+                return
+            }
             if case let .result(peer) = result {
                 currentOverlay?.dismiss()
                 currentOverlay = nil
@@ -532,7 +547,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
                 }
                 persistAndSync(gift)
             }
-        })
+        }))
     }
 
     let saveImpl: () -> Void = {
@@ -545,7 +560,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
             id: existingGift?.id ?? UUID().uuidString,
             kind: state.kind,
             caption: caption.isEmpty ? nil : caption,
-            date: state.datePreset.timestamp(),
+            date: state.exactTimestamp ?? state.datePreset.timestamp(),
             isHidden: state.isHidden,
             isSaved: state.isSaved,
             showInChat: state.showInChat
@@ -555,41 +570,47 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
             guard let selectedGift = state.selectedGift else {
                 return
             }
+            updateState { $0.isSaving = true }
             gift.giftId = selectedGift.id
             gift.giftSnapshot = .generic(selectedGift)
-            resolveFromAndSave(gift)
+            resolveFromAndSave(gift, state.fromText)
         case .uniqueBySlug, .uniqueById:
             let slug = stuxnetNormalizedGiftSlug(state.slugText)
             guard !slug.isEmpty else {
                 return
             }
+            updateState { $0.isSaving = true }
             if let existingGift, existingGift.slug == slug, let snapshot = existingGift.giftSnapshot, case let .unique(uniqueGift) = snapshot {
                 gift.slug = uniqueGift.slug
                 gift.uniqueNumber = uniqueGift.number
                 gift.giftSnapshot = snapshot
-                resolveFromAndSave(gift)
+                resolveFromAndSave(gift, state.fromText)
                 return
             }
-            updateState { $0.isSaving = true }
             let overlay = OverlayStatusController(theme: currentPresentationData.theme, type: .loading(cancelled: nil))
             presentControllerImpl?(overlay)
             currentOverlay = overlay
-            let _ = (context.engine.payments.getUniqueStarGift(slug: slug)
+            operationDisposable.set((context.engine.payments.getUniqueStarGift(slug: slug)
             |> deliverOnMainQueue).start(next: { uniqueGift in
+                guard !didDelete else {
+                    return
+                }
                 currentOverlay?.dismiss()
                 currentOverlay = nil
-                updateState { $0.isSaving = false }
                 gift.kind = .uniqueBySlug
                 gift.slug = uniqueGift.slug
                 gift.uniqueNumber = uniqueGift.number
                 gift.giftSnapshot = .unique(uniqueGift)
-                resolveFromAndSave(gift)
+                resolveFromAndSave(gift, state.fromText)
             }, error: { _ in
+                guard !didDelete else {
+                    return
+                }
                 currentOverlay?.dismiss()
                 currentOverlay = nil
                 updateState { $0.isSaving = false }
                 presentControllerImpl?(textAlertController(context: context, title: "Gift Not Found", text: "Could not find a unique gift with this slug. Check the slug or paste a t.me/nft/ link.", actions: [TextAlertAction(type: .defaultAction, title: "OK", action: {})]))
-            })
+            }))
         }
     }
 
@@ -603,6 +624,9 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         pushControllerImpl?(stuxnetFakeGiftDatePickerController(context: context, currentPreset: currentState.datePreset, select: { preset in
             updateState { state in
                 state.datePreset = preset
+                // Selecting a preset is an explicit date change; don't keep
+                // the exact timestamp captured when an existing gift loaded.
+                state.exactTimestamp = nil
             }
         }))
     }, deleteGift: {
@@ -616,8 +640,12 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
             actions: [
                 TextAlertAction(type: .genericAction, title: currentPresentationData.strings.Common_Cancel, action: {}),
                 TextAlertAction(type: .defaultDestructiveAction, title: currentPresentationData.strings.Common_Delete, action: {
-                    store.deleteChatMessage(account: context.account, entry: existingGift)
-                    store.remove(id: existingGift.id)
+                    didDelete = true
+                    updateState { $0.isSaving = true }
+                    operationDisposable.set((store.deleteChatMessageSignal(account: context.account, entry: existingGift)
+                    |> deliverOnMainQueue).start(completed: {
+                        store.remove(id: existingGift.id)
+                    }))
                     dismissImpl?()
                 })
             ]
@@ -686,6 +714,13 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         controller?.present(c, in: .window(.root))
     }
     dismissImpl = { [weak controller] in
+        // Deletion is intentionally allowed to finish after the editor is
+        // dismissed; cancelling it here would leave the old local entry alive.
+        if !didDelete {
+            operationDisposable.dispose()
+        }
+        currentOverlay?.dismiss()
+        currentOverlay = nil
         controller?.dismiss()
     }
     return controller

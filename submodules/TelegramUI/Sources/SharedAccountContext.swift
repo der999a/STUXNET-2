@@ -234,7 +234,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     let hasInAppPurchases: Bool
     let testingEnvironment: Bool
 
-    private func applyMiraGateSnapshot(settings: MiraSettings, accountPeerId: PeerId) {
+    private func miraGateSnapshot(settings: MiraSettings, accountPeerId: PeerId?) -> MiraCoreGateSnapshot {
         let ghostSettings = settings.ghostSettings(forAccountPeerId: accountPeerId)
         var snapshot = MiraCoreGateSnapshot()
         snapshot.sendReadMessages = ghostSettings.sendReadMessages
@@ -258,7 +258,16 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         snapshot.fakeGiftsEnabled = settings.fakeGiftsEnabled
         snapshot.voiceChangerEnabled = settings.voiceChangerEnabled
         snapshot.voiceChangerPreset = settings.voiceChangerPreset
-        MiraCoreGate.shared.apply(snapshot, forAccountPeerId: accountPeerId)
+        return snapshot
+    }
+
+    private func applyMiraGateSnapshots(settings: MiraSettings) {
+        MiraCoreGate.shared.apply(self.miraGateSnapshot(settings: settings, accountPeerId: self.activeAccountsValue?.primary?.account.peerId))
+        var accountSnapshots: [PeerId: MiraCoreGateSnapshot] = [:]
+        for (_, context, _) in self.activeAccountsValue?.accounts ?? [] {
+            accountSnapshots[context.account.peerId] = self.miraGateSnapshot(settings: settings, accountPeerId: context.account.peerId)
+        }
+        MiraCoreGate.shared.replaceAccountSnapshots(accountSnapshots)
     }
 
     private var callStateDisposable: Disposable?
@@ -601,59 +610,15 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         
         let immediateMiraSettingsValue = self.immediateMiraSettingsValue
         self.miraSettingsDisposable = (self.accountManager.sharedData(keys: [ApplicationSpecificSharedDataKeys.miraSettings])
-        |> deliverOnMainQueue).start(next: { sharedData in
-            if let settings = sharedData.entries[ApplicationSpecificSharedDataKeys.miraSettings]?.get(MiraSettings.self) {
-                let _ = immediateMiraSettingsValue.swap(settings)
-                
-                let ghostSettings = settings.ghostSettings(forAccountPeerId: self.activeAccountsValue?.primary?.account.peerId)
-                var gateSnapshot = MiraCoreGateSnapshot()
-                gateSnapshot.sendReadMessages = ghostSettings.sendReadMessages
-                gateSnapshot.sendReadStories = ghostSettings.sendReadStories
-                gateSnapshot.sendOnlinePackets = ghostSettings.sendOnlinePackets
-                gateSnapshot.sendUploadProgress = ghostSettings.sendUploadProgress
-                gateSnapshot.sendOfflinePacketAfterOnline = ghostSettings.sendOfflinePacketAfterOnline
-                gateSnapshot.markReadAfterAction = ghostSettings.markReadAfterAction
-                gateSnapshot.useScheduledMessages = ghostSettings.useScheduledMessages
-                gateSnapshot.scheduledDelaySeconds = ghostSettings.scheduledDelaySeconds
-                gateSnapshot.sendWithoutSound = ghostSettings.sendWithoutSound
-                gateSnapshot.saveDeletedMessages = settings.saveDeletedMessages
-                gateSnapshot.saveMessagesHistory = settings.saveMessagesHistory
-                gateSnapshot.saveForBots = settings.saveForBots
-                gateSnapshot.disableAds = settings.disableAds
-                gateSnapshot.disableStories = settings.disableStories
-                gateSnapshot.localPremium = settings.effectiveLocalPremium
-                gateSnapshot.filterZalgo = settings.filterZalgo
-                gateSnapshot.localMessageEditEnabled = settings.localMessageEditEnabled
-                gateSnapshot.isGhostActive = ghostSettings.isGhostActive
-                gateSnapshot.fakeGiftsEnabled = settings.fakeGiftsEnabled
-                gateSnapshot.voiceChangerEnabled = settings.voiceChangerEnabled
-                gateSnapshot.voiceChangerPreset = settings.voiceChangerPreset
-                MiraCoreGate.shared.apply(gateSnapshot)
-
-                // Keep an account-scoped snapshot as well. Existing consumers
-                // continue using the global snapshot until they opt into the
-                // account-aware API, so this remains backward compatible.
-                if let accounts = self.activeAccountsValue?.accounts {
-                    for (_, accountContext, _) in accounts {
-                        let accountGhostSettings = settings.ghostSettings(forAccountPeerId: accountContext.account.peerId)
-                        var accountGateSnapshot = gateSnapshot
-                        accountGateSnapshot.sendReadMessages = accountGhostSettings.sendReadMessages
-                        accountGateSnapshot.sendReadStories = accountGhostSettings.sendReadStories
-                        accountGateSnapshot.sendOnlinePackets = accountGhostSettings.sendOnlinePackets
-                        accountGateSnapshot.sendUploadProgress = accountGhostSettings.sendUploadProgress
-                        accountGateSnapshot.sendOfflinePacketAfterOnline = accountGhostSettings.sendOfflinePacketAfterOnline
-                        accountGateSnapshot.markReadAfterAction = accountGhostSettings.markReadAfterAction
-                        accountGateSnapshot.useScheduledMessages = accountGhostSettings.useScheduledMessages
-                        accountGateSnapshot.scheduledDelaySeconds = accountGhostSettings.scheduledDelaySeconds
-                        accountGateSnapshot.sendWithoutSound = accountGhostSettings.sendWithoutSound
-                        accountGateSnapshot.isGhostActive = accountGhostSettings.isGhostActive
-                        MiraCoreGate.shared.apply(accountGateSnapshot, forAccountPeerId: accountContext.account.peerId)
-                    }
-                }
-                
-                Font.miraOverrideFontFamily = stuxnetInterfaceFontFamily(settings.interfaceFont)
-                AvatarNode.miraCornerStyle = settings.avatarCornerStyle
+        |> deliverOnMainQueue).start(next: { [weak self] sharedData in
+            guard let self else {
+                return
             }
+            let settings = sharedData.entries[ApplicationSpecificSharedDataKeys.miraSettings]?.get(MiraSettings.self) ?? .defaultSettings
+            let _ = immediateMiraSettingsValue.swap(settings)
+            self.applyMiraGateSnapshots(settings: settings)
+            Font.miraOverrideFontFamily = stuxnetInterfaceFontFamily(settings.interfaceFont)
+            AvatarNode.miraCornerStyle = settings.avatarCornerStyle
         })
         
         let _ = self.contactDataManager?.personNameDisplayOrder().start(next: { order in
@@ -869,7 +834,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                             let context = AccountContextImpl(sharedContext: self, account: account, limitsConfiguration: accountRecord.3.limitsConfiguration ?? .defaultValue, contentSettings: accountRecord.3.contentSettings ?? .default, appConfiguration: accountRecord.3.appConfiguration ?? .defaultValue, availableReplyColors: accountRecord.3.availableReplyColors, availableProfileColors: accountRecord.3.availableProfileColors)
 
                             self.activeAccountsValue!.accounts.append((account.id, context, accountRecord.2))
-                            self.applyMiraGateSnapshot(settings: immediateMiraSettingsValue.with { $0 }, accountPeerId: account.peerId)
+                            MiraCoreGate.shared.apply(self.miraGateSnapshot(settings: immediateMiraSettingsValue.with { $0 }, accountPeerId: account.peerId), forAccountPeerId: account.peerId)
                             
                             self.managedAccountDisposables.set(self.updateAccountBackupData(account: account).start(), forKey: account.id)
                             account.resetStateManagement()
@@ -921,6 +886,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                     self.activeAccountsValue!.currentAuth = authAccount
                 }
                 if hadUpdates {
+                    self.applyMiraGateSnapshots(settings: immediateMiraSettingsValue.with { $0 })
                     self.activeAccountsValue!.accounts.sort(by: { $0.2 < $1.2 })
                     self.activeAccountsPromise.set(.single(self.activeAccountsValue!))
                     

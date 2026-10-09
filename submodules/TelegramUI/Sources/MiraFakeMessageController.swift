@@ -21,6 +21,7 @@ private final class MiraFakeMessageState {
     var exactDateSelection: Bool = false
     var exactSeconds: String = String(format: "%02d", Calendar.current.component(.second, from: Date()))
     var version: Int = 0
+    var isSubmitting = false
 }
 
 private final class MiraFakeMessageControllerArguments {
@@ -189,7 +190,8 @@ private let miraFakeMessageDatePresets: [(String, Int32?)] = [
     ("Custom (days back)", -1)
 ]
 
-private let miraFakeMessageMaximumBatchSize = 1000
+// Transaction size controls work per queue turn, never the number of requested messages.
+private let miraFakeMessageTransactionBatchSize = 256
 
 private func miraClampedMessageTimestamp(_ value: Int64) -> Int32 {
     return Int32(max(Int64(Int32.min), min(Int64(Int32.max), value)))
@@ -199,21 +201,24 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
     let state = MiraFakeMessageState()
     let versionPromise = ValuePromise<Int>(0, ignoreRepeated: true)
     var dismissImpl: (() -> Void)?
+    let senderResolutionDisposable = MetaDisposable()
+    var isResolvingSender = false
 
     let arguments = MiraFakeMessageControllerArguments(state: state, updated: {
         state.version += 1
         versionPromise.set(state.version)
     })
 
-    let addMessages: (PeerId?, String?) -> Void = { authorPeerId, authorName in
+    let resolveSenderAndAdd: () -> Void = {
+        guard !state.isSubmitting else {
+            return
+        }
         let texts: [String]
         if state.oneMessagePerLine {
             texts = state.text
                 .components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
-                .prefix(miraFakeMessageMaximumBatchSize)
-                .map { $0 }
         } else {
             let text = state.text.trimmingCharacters(in: .whitespacesAndNewlines)
             texts = text.isEmpty ? [] : [text]
@@ -225,7 +230,7 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
         let baseDate: Int32
         if state.datePreset == miraFakeMessageDatePresets.count - 2 {
             baseDate = miraClampedMessageTimestamp(Int64(state.exactDate))
-        } else if state.datePreset < miraFakeMessageDatePresets.count, let offset = miraFakeMessageDatePresets[state.datePreset].1 {
+        } else if miraFakeMessageDatePresets.indices.contains(state.datePreset), let offset = miraFakeMessageDatePresets[state.datePreset].1 {
             if offset < 0 {
                 let requestedDays = Int64(state.customDaysBack) ?? 0
                 let days = max(0, min(requestedDays, Int64(Int32.max) / 86400))
@@ -236,16 +241,35 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
         } else {
             baseDate = now
         }
-        for (index, text) in texts.enumerated() {
-            // Keep scripted lines in their entered order when the chat sorts by date.
-            let date = miraClampedMessageTimestamp(Int64(baseDate) - Int64(texts.count - 1 - index))
-            let _ = context.engine.messages.miraAddFakeMessage(peerId: peerId, text: text, outgoing: state.outgoing, date: date, authorPeerId: authorPeerId, authorName: authorName).start()
-        }
-        dismissImpl?()
-    }
+        let outgoing = state.outgoing
+        state.isSubmitting = true
+        arguments.updated()
 
-    let resolveSenderAndAdd: () -> Void = {
-        guard !state.outgoing else {
+        let addMessages: (EnginePeer?, String?) -> Void = { author, fallbackName in
+            isResolvingSender = false
+            func insertBatch(startIndex: Int) {
+                let endIndex = min(startIndex + miraFakeMessageTransactionBatchSize, texts.count)
+                let messages: [(text: String, date: Int32)] = (startIndex ..< endIndex).map { index in
+                    // Keep scripted lines in their entered order when the chat sorts by date.
+                    let date = miraClampedMessageTimestamp(Int64(baseDate) - Int64(texts.count - 1 - index))
+                    return (texts[index], date)
+                }
+                let _ = (context.engine.messages.miraAddFakeMessages(peerId: peerId, messages: messages, outgoing: outgoing, authorPeerId: author?.id, authorName: author?.compactDisplayTitle ?? fallbackName)
+                |> deliverOnMainQueue).start(completed: {
+                    if endIndex < texts.count {
+                        insertBatch(startIndex: endIndex)
+                    } else {
+                        state.isSubmitting = false
+                        arguments.updated()
+                        dismissImpl?()
+                    }
+                })
+            }
+            // Once accepted, all batches finish even if the user leaves this screen.
+            // Only sender lookup is canceled by navigation; it has no local side effects.
+            insertBatch(startIndex: 0)
+        }
+        guard !outgoing else {
             addMessages(nil, nil)
             return
         }
@@ -259,12 +283,13 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
                 addMessages(nil, sender)
                 return
             }
-            let _ = (context.account.postbox.transaction { transaction -> EnginePeer? in
+            isResolvingSender = true
+            senderResolutionDisposable.set((context.account.postbox.transaction { transaction -> EnginePeer? in
                 let userPeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(value))
                 return transaction.getPeer(userPeerId).flatMap(EnginePeer.init)
             } |> deliverOnMainQueue).start(next: { peer in
-                addMessages(peer?.id, peer?.compactDisplayTitle ?? sender)
-            })
+                addMessages(peer, sender)
+            }))
         } else {
             var name = sender
             if name.hasPrefix("@") {
@@ -273,7 +298,8 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
             if let range = name.range(of: "t.me/", options: .caseInsensitive) {
                 name = String(name[range.upperBound...])
             }
-            let _ = (context.engine.peers.resolvePeerByName(name: name, referrer: nil)
+            isResolvingSender = true
+            senderResolutionDisposable.set((context.engine.peers.resolvePeerByName(name: name, referrer: nil)
             |> mapToSignal { result -> Signal<EnginePeer?, NoError> in
                 switch result {
                 case .progress:
@@ -282,15 +308,16 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
                     return .single(peer)
                 }
             }
+            |> take(1)
             |> deliverOnMainQueue).start(next: { peer in
-                addMessages(peer?.id, peer?.compactDisplayTitle ?? sender)
-            })
+                addMessages(peer, sender)
+            }))
         }
     }
 
     let signal = combineLatest(context.sharedContext.presentationData, versionPromise.get())
     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, MiraFakeMessageControllerArguments)) in
-        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Add Fake Message"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: .regular, enabled: true, action: {
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Add Fake Message"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: state.isSubmitting ? .activity : .regular, enabled: !state.isSubmitting && !state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, action: {
             resolveSenderAndAdd()
         }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
 
@@ -328,10 +355,24 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
 
         return (controllerState, (listState, arguments))
     }
+    |> afterDisposed {
+        senderResolutionDisposable.dispose()
+    }
 
     let controller = ItemListController(context: context, state: signal)
+    controller.willDisappear = { _ in
+        if isResolvingSender {
+            senderResolutionDisposable.set(nil)
+            isResolvingSender = false
+            state.isSubmitting = false
+            arguments.updated()
+        }
+    }
     dismissImpl = { [weak controller] in
-        let _ = (controller?.navigationController as? NavigationController)?.popViewController(animated: true)
+        guard let controller, let navigationController = controller.navigationController as? NavigationController, navigationController.topViewController === controller else {
+            return
+        }
+        let _ = navigationController.popViewController(animated: true)
     }
     return controller
 }
@@ -358,8 +399,16 @@ private enum MiraFakeMessagesListEntry: ItemListNodeEntry {
             return 0
         case .count:
             return 1
-        case let .message(index, _, _, _):
-            return 10 + index * 2
+        case let .message(_, record, _, _):
+            // Row identifiers remain stable when the list is sorted and cannot
+            // collide with the fixed Add/Count/Remove rows at large counts.
+            let value = Int(truncatingIfNeeded: record.stableUniqueId)
+            switch value {
+            case 0, 1, 100000, 100001:
+                return value ^ 0x40000000
+            default:
+                return value
+            }
         case .removeAll:
             return 100000
         case .empty:

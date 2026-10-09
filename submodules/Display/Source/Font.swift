@@ -158,15 +158,24 @@ public struct Font {
 
     private static let cache = Cache()
     
-    // Stuxnet: interface font override (family name, e.g. "Avenir Next"). Assign from the
-    // main queue only; wired to the miraSettings subscription in SharedAccountContext.swift.
-    public static var miraOverrideFontFamily: String? = nil {
-        didSet {
-            if let family = self.miraOverrideFontFamily {
-                self.miraOverrideFontNames = Font.miraResolveFontNames(family: family)
-            } else {
-                self.miraOverrideFontNames = [:]
+    // Text layout also reads fonts on background queues. Protect the family and
+    // resolved names together when a settings change replaces their storage.
+    private static let miraOverrideFontLock = NSLock()
+    private static var _miraOverrideFontFamily: String?
+    public static var miraOverrideFontFamily: String? {
+        get {
+            self.miraOverrideFontLock.lock()
+            defer { self.miraOverrideFontLock.unlock() }
+            return self._miraOverrideFontFamily
+        }
+        set {
+            self.miraOverrideFontLock.lock()
+            defer { self.miraOverrideFontLock.unlock() }
+            guard self._miraOverrideFontFamily != newValue else {
+                return
             }
+            self.miraOverrideFontNames = newValue.map { Font.miraResolveFontNames(family: $0) } ?? [:]
+            self._miraOverrideFontFamily = newValue
         }
     }
     
@@ -211,7 +220,10 @@ public struct Font {
     }
     
     private static func miraFont(size: CGFloat, weightKey: String) -> UIFont? {
-        guard let name = self.miraOverrideFontNames[weightKey], let font = UIFont(name: name, size: size) else {
+        self.miraOverrideFontLock.lock()
+        let name = self.miraOverrideFontNames[weightKey]
+        self.miraOverrideFontLock.unlock()
+        guard let name, let font = UIFont(name: name, size: size) else {
             return nil
         }
         return font
