@@ -30,6 +30,10 @@ func murMurHashString32(_ text: String) -> Int32 {
     return Int32(bitPattern: hash)
 }
 func postboxLog(_ text: String) {}
+func mdb_cmp_memn(_ lhs: UnsafeRawPointer, _ lhsLength: Int, _ rhs: UnsafeRawPointer, _ rhsLength: Int) -> Int32 {
+    let compared = memcmp(lhs, rhs, min(lhsLength, rhsLength))
+    return compared == 0 ? (lhsLength == rhsLength ? 0 : (lhsLength < rhsLength ? -1 : 1)) : compared
+}
 public enum EnginePeer { public typealias Id = PeerId }
 '''
     parts = [fixtures, read(postbox + "Coding.swift")]
@@ -68,7 +72,7 @@ check(migrated.localPremium && migrated.ghost["0"] == ghost && migrated.ghostByA
     # Toggle every persisted boolean independently with both empty and populated
     # dictionaries, exactly like each settings action followed by sharedData.
     model = extract(settings, "public struct MiraSettings")
-    for name in re.findall(r"public var (\w+): Bool", model):
+    for name in re.findall(r"public var (\w+): Bool\s*\n", model):
         tests += f"configured.{name}.toggle(); roundTrip(configured)\n"
         tests += f"var empty_{name} = MiraSettings.defaultSettings; empty_{name}.{name}.toggle(); roundTrip(empty_{name})\n"
     tests += '''
@@ -104,6 +108,15 @@ def main():
         binary = directory / "codec-test"
         subprocess.run(["swiftc", str(path), "-Onone", "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=30)
+        # Reinstall the old allKeys trap in the otherwise identical production
+        # code. The same default-settings round trip must reproduce the crash.
+        baseline = source().replace("return self.decoder.allKeys.compactMap { Key(stringValue: $0) }", "preconditionFailure()")
+        path.write_text(baseline, encoding="utf-8")
+        subprocess.run(["swiftc", str(path), "-Onone", "-o", str(binary)], check=True)
+        old = subprocess.run([str(binary)], capture_output=True, timeout=30)
+        if old.returncode >= 0:
+            raise RuntimeError("Original allKeys implementation did not reproduce the expected crash")
+        print("Original decoder reproduced crash; repaired decoder passed every toggle")
     return 0
 
 if __name__ == "__main__":
