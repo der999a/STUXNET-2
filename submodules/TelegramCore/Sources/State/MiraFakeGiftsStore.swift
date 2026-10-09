@@ -16,6 +16,7 @@ public struct MiraFakeGift: Codable, Equatable {
         case slug
         case uniqueNumber
         case fromPeerId
+        case fromPeerIdIsPacked
         case fromName
         case caption
         case date
@@ -33,6 +34,8 @@ public struct MiraFakeGift: Codable, Equatable {
     public var slug: String?
     public var uniqueNumber: Int32?
     public var fromPeerId: Int64?
+    // nil denotes legacy entries that mixed raw user ids and packed PeerIds.
+    public var fromPeerIdIsPacked: Bool?
     public var fromName: String?
     public var caption: String?
     public var date: Int32
@@ -55,6 +58,7 @@ public struct MiraFakeGift: Codable, Equatable {
         slug: String? = nil,
         uniqueNumber: Int32? = nil,
         fromPeerId: Int64? = nil,
+        fromPeerIdIsPacked: Bool? = nil,
         fromName: String? = nil,
         caption: String? = nil,
         date: Int32,
@@ -71,6 +75,7 @@ public struct MiraFakeGift: Codable, Equatable {
         self.slug = slug
         self.uniqueNumber = uniqueNumber
         self.fromPeerId = fromPeerId
+        self.fromPeerIdIsPacked = fromPeerIdIsPacked
         self.fromName = fromName
         self.caption = caption
         self.date = date
@@ -90,6 +95,7 @@ public struct MiraFakeGift: Codable, Equatable {
         self.slug = try container.decodeIfPresent(String.self, forKey: .slug)
         self.uniqueNumber = try container.decodeIfPresent(Int32.self, forKey: .uniqueNumber)
         self.fromPeerId = try container.decodeIfPresent(Int64.self, forKey: .fromPeerId)
+        self.fromPeerIdIsPacked = try container.decodeIfPresent(Bool.self, forKey: .fromPeerIdIsPacked)
         self.fromName = try container.decodeIfPresent(String.self, forKey: .fromName)
         self.caption = try container.decodeIfPresent(String.self, forKey: .caption)
         self.date = try container.decodeIfPresent(Int32.self, forKey: .date) ?? 0
@@ -119,11 +125,14 @@ public struct MiraFakeGift: Codable, Equatable {
     /// entries may contain the packed PeerId value. Normalize both forms
     /// before looking up a sender so malformed values never reach PeerId's
     /// packed initializer in the message/profile projection.
-    public static func peerId(fromStoredValue value: Int64) -> PeerId? {
+    public static func peerId(fromStoredValue value: Int64, isPacked: Bool? = nil) -> PeerId? {
         guard value > 0 else {
             return nil
         }
-        if value <= Int64(Int32.max) {
+        if isPacked == false || (isPacked == nil && value <= Int64(Int32.max)) {
+            guard value <= 0x00ffffffffffffff else {
+                return nil
+            }
             return PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(value))
         }
         let bits = UInt64(bitPattern: value)
@@ -344,10 +353,10 @@ public final class MiraFakeGiftsStore {
     public func clear(account: Account) {
         let entries = self.list()
         let messageIds = entries.compactMap { entry -> MessageId? in
-            guard let peerId = entry.chatMessagePeerId, let id = entry.chatMessageId else {
+            guard let value = entry.chatMessagePeerId, let peerId = MiraMessageHistoryStore.peerId(fromPackedValue: value), let id = entry.chatMessageId else {
                 return nil
             }
-            return MessageId(peerId: EnginePeer.Id(peerId), namespace: Namespaces.Message.Local, id: id)
+            return MessageId(peerId: peerId, namespace: Namespaces.Message.Local, id: id)
         }
         let _ = account.postbox.transaction { transaction in
             if !messageIds.isEmpty {
@@ -417,8 +426,11 @@ extension MiraFakeGiftsStore {
             }
             return account.postbox.transaction { transaction -> ProfileGiftsContext.State.StarGift in
                 var fromPeer: EnginePeer?
-                if let fromPeerId = entry.fromPeerId, let normalizedPeerId = MiraFakeGift.peerId(fromStoredValue: fromPeerId) {
+                if let fromPeerId = entry.fromPeerId, let normalizedPeerId = MiraFakeGift.peerId(fromStoredValue: fromPeerId, isPacked: entry.fromPeerIdIsPacked) {
                     fromPeer = transaction.getPeer(normalizedPeerId).flatMap { EnginePeer($0) }
+                }
+                if entry.fromPeerIdIsPacked == nil, let rawId = entry.fromPeerId, let userId = MiraFakeGift.peerId(fromStoredValue: rawId, isPacked: false), let user = transaction.getPeer(userId).flatMap(EnginePeer.init), case .user = user {
+                    fromPeer = user
                 }
 
                 // A gift sender is rendered as a user in Telegram's gift
@@ -433,6 +445,21 @@ extension MiraFakeGiftsStore {
                         fromPeer = nil
                     }
                 }
+                var projectedGift = gift
+                if case let .unique(uniqueGift) = gift {
+                    var attributes = uniqueGift.attributes.filter { $0.attributeType != .originalInfo }
+                    attributes.append(.originalInfo(senderPeerId: fromPeer?.id, recipientPeerId: account.peerId, date: entry.date, text: entry.caption, entities: nil))
+                    // Keep Telegram's model/pattern/backdrop assets, while the
+                    // local sender and recipient drive avatars and profile links.
+                    projectedGift = .unique(StarGift.UniqueGift(
+                        id: uniqueGift.id, giftId: uniqueGift.giftId, title: uniqueGift.title, number: uniqueGift.number, slug: uniqueGift.slug,
+                        owner: .peerId(account.peerId), attributes: attributes, availability: uniqueGift.availability,
+                        giftAddress: nil, resellAmounts: nil, resellForTonOnly: false, releasedBy: uniqueGift.releasedBy,
+                        valueAmount: uniqueGift.valueAmount, valueCurrency: uniqueGift.valueCurrency, valueUsdAmount: uniqueGift.valueUsdAmount,
+                        flags: uniqueGift.flags, themePeerId: uniqueGift.themePeerId, peerColor: uniqueGift.peerColor, hostPeerId: nil,
+                        minOfferStars: nil, craftChancePermille: uniqueGift.craftChancePermille
+                    ))
+                }
                 let reference: StarGiftReference
                 switch gift {
                 case .unique:
@@ -444,7 +471,7 @@ extension MiraFakeGiftsStore {
                     reference = .peer(peerId: account.peerId, id: entry.stableSavedId)
                 }
                 return ProfileGiftsContext.State.StarGift(
-                    gift: gift,
+                    gift: projectedGift,
                     reference: reference,
                     fromPeer: fromPeer,
                     date: entry.date,
@@ -489,8 +516,11 @@ extension MiraFakeGiftsStore {
             var entry = entry
             return account.postbox.transaction { transaction -> MiraFakeGift in
                 var fromPeer: EnginePeer?
-                if let fromPeerId = entry.fromPeerId, let normalizedPeerId = MiraFakeGift.peerId(fromStoredValue: fromPeerId) {
+                if let fromPeerId = entry.fromPeerId, let normalizedPeerId = MiraFakeGift.peerId(fromStoredValue: fromPeerId, isPacked: entry.fromPeerIdIsPacked) {
                     fromPeer = transaction.getPeer(normalizedPeerId).flatMap { EnginePeer($0) }
+                }
+                if entry.fromPeerIdIsPacked == nil, let rawId = entry.fromPeerId, let userId = MiraFakeGift.peerId(fromStoredValue: rawId, isPacked: false), let user = transaction.getPeer(userId).flatMap(EnginePeer.init), case .user = user {
+                    fromPeer = user
                 }
 
                 if let resolvedFromPeer = fromPeer {
@@ -597,11 +627,11 @@ extension MiraFakeGiftsStore {
     }
 
     public func deleteChatMessageSignal(account: Account, entry: MiraFakeGift) -> Signal<Void, NoError> {
-        guard let chatMessageId = entry.chatMessageId, let chatMessagePeerId = entry.chatMessagePeerId else {
+        guard let chatMessageId = entry.chatMessageId, let storedPeerId = entry.chatMessagePeerId, let chatMessagePeerId = MiraMessageHistoryStore.peerId(fromPackedValue: storedPeerId) else {
             return .single(())
         }
         return account.postbox.transaction { transaction in
-            transaction.deleteMessages([MessageId(peerId: EnginePeer.Id(chatMessagePeerId), namespace: Namespaces.Message.Local, id: chatMessageId)], forEachMedia: nil)
+            transaction.deleteMessages([MessageId(peerId: chatMessagePeerId, namespace: Namespaces.Message.Local, id: chatMessageId)], forEachMedia: nil)
         }
     }
 

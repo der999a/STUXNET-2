@@ -32,6 +32,7 @@ swift_library(
         "//submodules/GalleryUI:GalleryUI",
         "//submodules/Geocoding:Geocoding",
         "//submodules/ItemListUI:ItemListUI",
+        "//submodules/TelegramUI/Components/ItemListDatePickerItem:ItemListDatePickerItem",
         "//submodules/ItemListStickerPackItem:ItemListStickerPackItem",
         "//submodules/ItemListPeerItem:ItemListPeerItem",
         "//submodules/ItemListPeerActionItem:ItemListPeerActionItem",

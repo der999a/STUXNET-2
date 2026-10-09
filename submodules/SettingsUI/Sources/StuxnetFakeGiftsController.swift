@@ -10,6 +10,7 @@ import PresentationDataUtils
 import AccountContext
 import LocalizedPeerData
 import OverlayStatusController
+import ItemListDatePickerItem
 
 private func stuxnetFakeGiftTitle(_ gift: MiraFakeGift) -> String {
     if let snapshot = gift.giftSnapshot {
@@ -192,6 +193,7 @@ private enum StuxnetFakeGiftDatePreset: Equatable {
     case hourAgo
     case todayMorning
     case days(Int32)
+    case exact(Int32)
 
     func timestamp() -> Int32 {
         let now = Date()
@@ -204,7 +206,9 @@ private enum StuxnetFakeGiftDatePreset: Equatable {
             let startOfDay = Calendar.current.startOfDay(for: now)
             return Int32(startOfDay.addingTimeInterval(9 * 3600).timeIntervalSince1970)
         case let .days(days):
-            return Int32(now.timeIntervalSince1970) - days * 86400
+            return Int32(clamping: Int64(now.timeIntervalSince1970) - Int64(days) * 86400)
+        case let .exact(timestamp):
+            return timestamp
         }
     }
 
@@ -229,12 +233,14 @@ private enum StuxnetFakeGiftDatePreset: Equatable {
             default:
                 return "\(days) days ago"
             }
+        case let .exact(timestamp):
+            return stuxnetFakeGiftDateString(timestamp)
         }
     }
 
     static func from(timestamp: Int32) -> StuxnetFakeGiftDatePreset {
         let now = Date()
-        let diff = Int32(now.timeIntervalSince1970) - timestamp
+        let diff = Int64(now.timeIntervalSince1970) - Int64(timestamp)
         if diff < 40 * 60 {
             return .now
         } else if diff < 90 * 60 {
@@ -242,7 +248,7 @@ private enum StuxnetFakeGiftDatePreset: Equatable {
         } else if diff < 86400, Calendar.current.isDateInToday(Date(timeIntervalSince1970: TimeInterval(timestamp))) {
             return .todayMorning
         } else {
-            return .days(max(1, diff / 86400))
+            return .days(Int32(clamping: max(1, diff / 86400)))
         }
     }
 }
@@ -252,6 +258,8 @@ private struct StuxnetAddFakeGiftState: Equatable {
     var selectedGift: StarGift.Gift?
     var slugText: String = ""
     var fromText: String = ""
+    var selectedSenderId: EnginePeer.Id?
+    var selectedSenderName: String?
     var captionText: String = ""
     var datePreset: StuxnetFakeGiftDatePreset = .now
     // Preserve an edited gift's exact timestamp until the user explicitly
@@ -267,12 +275,14 @@ private final class StuxnetAddFakeGiftControllerArguments {
     let updateState: ((inout StuxnetAddFakeGiftState) -> Void) -> Void
     let openGiftPicker: () -> Void
     let openDatePicker: () -> Void
+    let openSenderPicker: () -> Void
     let deleteGift: () -> Void
 
-    init(updateState: @escaping ((inout StuxnetAddFakeGiftState) -> Void) -> Void, openGiftPicker: @escaping () -> Void, openDatePicker: @escaping () -> Void, deleteGift: @escaping () -> Void) {
+    init(updateState: @escaping ((inout StuxnetAddFakeGiftState) -> Void) -> Void, openGiftPicker: @escaping () -> Void, openDatePicker: @escaping () -> Void, openSenderPicker: @escaping () -> Void, deleteGift: @escaping () -> Void) {
         self.updateState = updateState
         self.openGiftPicker = openGiftPicker
         self.openDatePicker = openDatePicker
+        self.openSenderPicker = openSenderPicker
         self.deleteGift = deleteGift
     }
 }
@@ -294,6 +304,7 @@ private enum StuxnetAddFakeGiftEntry: ItemListNodeEntry {
     case slugInput(String)
     case fromHeader(String)
     case fromInput(String)
+    case fromPicker(String)
     case detailsHeader(String)
     case captionInput(String)
     case dateRow(String)
@@ -309,7 +320,7 @@ private enum StuxnetAddFakeGiftEntry: ItemListNodeEntry {
             return StuxnetAddFakeGiftSection.type.rawValue
         case .giftHeader, .giftPicker, .slugInput:
             return StuxnetAddFakeGiftSection.gift.rawValue
-        case .fromHeader, .fromInput:
+        case .fromHeader, .fromInput, .fromPicker:
             return StuxnetAddFakeGiftSection.from.rawValue
         case .detailsHeader, .captionInput, .dateRow, .hidden, .saved, .showInChat, .footerInfo:
             return StuxnetAddFakeGiftSection.details.rawValue
@@ -336,22 +347,24 @@ private enum StuxnetAddFakeGiftEntry: ItemListNodeEntry {
             return 6
         case .fromInput:
             return 7
-        case .detailsHeader:
+        case .fromPicker:
             return 8
-        case .captionInput:
+        case .detailsHeader:
             return 9
-        case .dateRow:
+        case .captionInput:
             return 10
-        case .hidden:
+        case .dateRow:
             return 11
-        case .saved:
+        case .hidden:
             return 12
-        case .showInChat:
+        case .saved:
             return 13
-        case .footerInfo:
+        case .showInChat:
             return 14
-        case .deleteGift:
+        case .footerInfo:
             return 15
+        case .deleteGift:
+            return 16
         }
     }
 
@@ -394,8 +407,12 @@ private enum StuxnetAddFakeGiftEntry: ItemListNodeEntry {
             return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "From"), text: text, placeholder: "@username or user ID", type: .regular(capitalization: false, autocorrection: false), sectionId: self.section, textUpdated: { value in
                 arguments.updateState { state in
                     state.fromText = value
+                    state.selectedSenderId = nil
+                    state.selectedSenderName = nil
                 }
             }, action: {})
+        case let .fromPicker(label):
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Выбрать отправителя" : "Choose sender", label: label, sectionId: self.section, style: .blocks, action: arguments.openSenderPicker)
         case let .detailsHeader(text):
             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
         case let .captionInput(text):
@@ -447,7 +464,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         state.slugText = existingGift.slug ?? ""
         state.fromText = existingGift.fromPeerId.flatMap { "\($0)" } ?? existingGift.fromName ?? ""
         state.captionText = existingGift.caption ?? ""
-        state.datePreset = StuxnetFakeGiftDatePreset.from(timestamp: existingGift.date)
+        state.datePreset = .exact(existingGift.date)
         state.exactTimestamp = existingGift.date
         state.isHidden = existingGift.isHidden
         state.isSaved = existingGift.isSaved
@@ -503,18 +520,39 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         // Use the snapshot captured by Save. Reading currentState here lets a
         // later keystroke change the sender while an NFT lookup is in flight.
         let fromText = senderText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if gift.fromPeerId != nil {
+            persistAndSync(gift)
+            return
+        }
         if fromText.isEmpty {
             persistAndSync(gift)
             return
         }
         if let peerIdValue = Int64(fromText) {
+            guard MiraFakeGift.peerId(fromStoredValue: peerIdValue, isPacked: false) != nil else {
+                updateState { $0.isSaving = false }
+                presentControllerImpl?(textAlertController(context: context, title: "Invalid user ID", text: "Enter a Telegram user ID or @username.", actions: [TextAlertAction(type: .defaultAction, title: currentPresentationData.strings.Common_OK, action: {})]))
+                return
+            }
             gift.fromPeerId = peerIdValue
+            gift.fromPeerIdIsPacked = false
             if let existingGift, existingGift.fromPeerId == peerIdValue, let existingName = existingGift.fromName {
                 gift.fromName = existingName
+                gift.fromPeerIdIsPacked = existingGift.fromPeerIdIsPacked
             } else {
                 gift.fromName = "ID \(peerIdValue)"
             }
-            persistAndSync(gift)
+            guard let storedId = MiraFakeGift.peerId(fromStoredValue: peerIdValue, isPacked: gift.fromPeerIdIsPacked) else {
+                updateState { $0.isSaving = false }
+                return
+            }
+            operationDisposable.set((context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: storedId))
+            |> deliverOnMainQueue).start(next: { peer in
+                if let peer, case .user = peer {
+                    gift.fromName = peer.compactDisplayTitle
+                }
+                persistAndSync(gift)
+            }))
             return
         }
         var name = fromText
@@ -540,6 +578,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
                 currentOverlay = nil
                 if let peer {
                     gift.fromPeerId = peer.id.toInt64()
+                    gift.fromPeerIdIsPacked = true
                     gift.fromName = peer.compactDisplayTitle
                 } else {
                     gift.fromPeerId = nil
@@ -565,6 +604,11 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
             isSaved: state.isSaved,
             showInChat: state.showInChat
         )
+        if let senderId = state.selectedSenderId {
+            gift.fromPeerId = senderId.toInt64()
+            gift.fromPeerIdIsPacked = true
+            gift.fromName = state.selectedSenderName
+        }
         switch state.kind {
         case .regular:
             guard let selectedGift = state.selectedGift else {
@@ -629,6 +673,24 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
                 state.exactTimestamp = nil
             }
         }))
+    }, openSenderPicker: {
+        let picker = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyPrivateChats, .excludeSavedMessages, .removeSearchHeader, .excludeRecent, .doNotSearchMessages], title: currentPresentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Отправитель подарка" : "Gift sender"))
+        picker.peerSelected = { [weak picker] peer, _ in
+            guard case .user = peer else {
+                return
+            }
+            updateState { state in
+                state.selectedSenderId = peer.id
+                state.selectedSenderName = peer.compactDisplayTitle
+                state.fromText = String(peer.id.toInt64())
+            }
+            if let picker, let navigationController = picker.navigationController as? NavigationController, navigationController.topViewController === picker {
+                _ = navigationController.popViewController(animated: true)
+            } else {
+                picker?.dismiss()
+            }
+        }
+        pushControllerImpl?(picker)
     }, deleteGift: {
         guard let existingGift else {
             return
@@ -677,6 +739,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
 
         entries.append(.fromHeader("Sender".uppercased()))
         entries.append(.fromInput(state.fromText))
+        entries.append(.fromPicker(state.selectedSenderName ?? ""))
 
         entries.append(.detailsHeader("Details".uppercased()))
         entries.append(.captionInput(state.captionText))
@@ -873,16 +936,24 @@ private func stuxnetFakeGiftPickerController(context: AccountContext, currentGif
 private final class StuxnetFakeGiftDatePickerArguments {
     let select: (StuxnetFakeGiftDatePreset) -> Void
     let updateCustomDays: (String) -> Void
+    let updateExactDate: (Int32) -> Void
+    let updateSeconds: (String) -> Void
+    let toggleDateSelection: (Bool) -> Void
 
-    init(select: @escaping (StuxnetFakeGiftDatePreset) -> Void, updateCustomDays: @escaping (String) -> Void) {
+    init(select: @escaping (StuxnetFakeGiftDatePreset) -> Void, updateCustomDays: @escaping (String) -> Void, updateExactDate: @escaping (Int32) -> Void, updateSeconds: @escaping (String) -> Void, toggleDateSelection: @escaping (Bool) -> Void) {
         self.select = select
         self.updateCustomDays = updateCustomDays
+        self.updateExactDate = updateExactDate
+        self.updateSeconds = updateSeconds
+        self.toggleDateSelection = toggleDateSelection
     }
 }
 
 private enum StuxnetFakeGiftDatePickerEntry: ItemListNodeEntry {
     case option(Int, StuxnetFakeGiftDatePreset, String, Bool)
     case customDays(String)
+    case exactDate(Int32, Bool)
+    case seconds(String)
 
     var section: ItemListSectionId {
         return 0
@@ -894,6 +965,10 @@ private enum StuxnetFakeGiftDatePickerEntry: ItemListNodeEntry {
             return index
         case .customDays:
             return 100000
+        case .exactDate:
+            return 100001
+        case .seconds:
+            return 100002
         }
     }
 
@@ -912,12 +987,33 @@ private enum StuxnetFakeGiftDatePickerEntry: ItemListNodeEntry {
             return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "Custom"), text: text, placeholder: "Days back", type: .number, returnKeyType: .done, sectionId: self.section, textUpdated: { value in
                 arguments.updateCustomDays(value)
             }, action: {})
+        case let .exactDate(timestamp, selectingDate):
+            let russian = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+            return ItemListDatePickerItem(presentationData: presentationData, systemStyle: .glass, dateTimeFormat: presentationData.dateTimeFormat, date: timestamp, minDate: 0, title: russian ? "Дата и время" : "Date & time", displayingDateSelection: selectingDate, displayingTimeSelection: !selectingDate, sectionId: self.section, style: .blocks, toggleDateSelection: {
+                arguments.toggleDateSelection(true)
+            }, toggleTimeSelection: {
+                arguments.toggleDateSelection(false)
+            }, updated: { date in
+                arguments.updateExactDate(date)
+            })
+        case let .seconds(text):
+            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Секунды" : "Seconds"), text: text, placeholder: "0–59", type: .number, returnKeyType: .done, sectionId: self.section, textUpdated: arguments.updateSeconds, action: {})
         }
     }
 }
 
 private func stuxnetFakeGiftDatePickerController(context: AccountContext, currentPreset: StuxnetFakeGiftDatePreset, select: @escaping (StuxnetFakeGiftDatePreset) -> Void) -> ViewController {
     var dismissImpl: (() -> Void)?
+    let revision = ValuePromise<Int>(0)
+    var version = 0
+    let refresh: () -> Void = {
+        version += 1
+        revision.set(version)
+    }
+    var exactDate = currentPreset.timestamp()
+    var selectingDate = true
+    var secondsText = String(format: "%02d", Calendar.current.component(.second, from: Date(timeIntervalSince1970: TimeInterval(exactDate))))
+    var customDateChanged = false
 
     var customDaysText: String = ""
     if case let .days(days) = currentPreset, ![1, 7, 30, 90].contains(days) {
@@ -925,10 +1021,12 @@ private func stuxnetFakeGiftDatePickerController(context: AccountContext, curren
     }
 
     let applyCustom: () -> Void = {
-        if let days = Int32(customDaysText), days >= 0 {
+        if !customDateChanged, let days = Int32(customDaysText), days >= 0 {
             select(.days(days))
-            dismissImpl?()
+        } else {
+            select(.exact(exactDate))
         }
+        dismissImpl?()
     }
 
     let arguments = StuxnetFakeGiftDatePickerArguments(select: { preset in
@@ -936,12 +1034,37 @@ private func stuxnetFakeGiftDatePickerController(context: AccountContext, curren
         dismissImpl?()
     }, updateCustomDays: { value in
         customDaysText = value
+        customDateChanged = false
+    }, updateExactDate: { timestamp in
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+        components.second = calendar.component(.second, from: Date(timeIntervalSince1970: TimeInterval(exactDate)))
+        if let date = calendar.date(from: components) {
+            exactDate = Int32(clamping: Int64(date.timeIntervalSince1970))
+            customDateChanged = true
+            refresh()
+        }
+    }, updateSeconds: { value in
+        secondsText = value
+        if let seconds = Int(value), (0 ... 59).contains(seconds) {
+            let calendar = Calendar.current
+            var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date(timeIntervalSince1970: TimeInterval(exactDate)))
+            components.second = seconds
+            if let date = calendar.date(from: components) {
+                exactDate = Int32(clamping: Int64(date.timeIntervalSince1970))
+                customDateChanged = true
+            }
+        }
+        refresh()
+    }, toggleDateSelection: { value in
+        selectingDate = value
+        refresh()
     })
 
     let presets: [StuxnetFakeGiftDatePreset] = [.now, .hourAgo, .todayMorning, .days(1), .days(7), .days(30), .days(90)]
 
-    let signal = context.sharedContext.presentationData
-    |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
+    let signal = combineLatest(context.sharedContext.presentationData, revision.get())
+    |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
         var entries: [StuxnetFakeGiftDatePickerEntry] = []
         var index = 0
         for preset in presets {
@@ -949,10 +1072,11 @@ private func stuxnetFakeGiftDatePickerController(context: AccountContext, curren
             index += 1
         }
         entries.append(.customDays(customDaysText))
+        entries.append(.exactDate(exactDate, selectingDate))
+        entries.append(.seconds(secondsText))
 
-        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Gift Date"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text("Done"), style: .bold, enabled: true, action: {
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Дата подарка" : "Gift Date"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: .bold, enabled: Int(secondsText).map { (0 ... 59).contains($0) } ?? false, action: {
             applyCustom()
-            dismissImpl?()
         }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
 

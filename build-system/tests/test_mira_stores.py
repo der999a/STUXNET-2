@@ -220,6 +220,13 @@ for id in [userId(1), userId(0x00ffffffffffffff), PeerId(namespace: ._internalFr
     require(MiraMessageHistoryStore.peerId(fromPackedValue: id.toInt64())?.toInt64() == id.toInt64(), "packed PeerId round trip")
 }
 require(MiraMessageHistoryStore.peerId(fromPackedValue: Int64.max) == nil, "invalid packed PeerId rejected")
+let rawSender = Int64(9876543210)
+require(MiraFakeGift.peerId(fromStoredValue: rawSender, isPacked: false) == userId(rawSender), "large raw gift user id remains a user")
+require(MiraFakeGift.peerId(fromStoredValue: userId(rawSender).toInt64(), isPacked: true) == userId(rawSender), "packed gift sender round trip")
+require(MiraFakeGift.peerId(fromStoredValue: Int64.max, isPacked: false) == nil, "invalid raw gift user id rejected")
+let senderGift = MiraFakeGift(id: "sender-date", kind: .regular, fromPeerId: rawSender, fromPeerIdIsPacked: false, date: 1700000042)
+let decodedSenderGift = try! JSONDecoder().decode(MiraFakeGift.self, from: JSONEncoder().encode(senderGift))
+require(decodedSenderGift.fromPeerIdIsPacked == false && decodedSenderGift.date == 1700000042, "sender format and exact seconds persist")
 print("Mira store regressions passed")
 '''
 
