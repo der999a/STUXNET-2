@@ -417,7 +417,22 @@ private enum MiraFakeMessagesListEntry: ItemListNodeEntry {
     }
 
     static func < (lhs: MiraFakeMessagesListEntry, rhs: MiraFakeMessagesListEntry) -> Bool {
-        return lhs.stableId < rhs.stableId
+        return lhs.order < rhs.order
+    }
+
+    private var order: Int {
+        switch self {
+        case .add:
+            return 0
+        case .count:
+            return 1
+        case let .message(index, _, _, _):
+            return 2 + index
+        case .removeAll:
+            return Int.max - 1
+        case .empty:
+            return Int.max
+        }
     }
 
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {

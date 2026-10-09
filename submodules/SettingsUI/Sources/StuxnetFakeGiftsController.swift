@@ -725,7 +725,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
             return
         }
         if let navigationController = controller.navigationController as? NavigationController, navigationController.topViewController === controller {
-            navigationController.popViewController(animated: true)
+            _ = navigationController.popViewController(animated: true)
         } else {
             controller.dismiss()
         }
@@ -860,7 +860,7 @@ private func stuxnetFakeGiftPickerController(context: AccountContext, currentGif
             return
         }
         if let navigationController = controller.navigationController as? NavigationController, navigationController.topViewController === controller {
-            navigationController.popViewController(animated: true)
+            _ = navigationController.popViewController(animated: true)
         } else {
             controller.dismiss()
         }
@@ -965,7 +965,7 @@ private func stuxnetFakeGiftDatePickerController(context: AccountContext, curren
             return
         }
         if let navigationController = controller.navigationController as? NavigationController, navigationController.topViewController === controller {
-            navigationController.popViewController(animated: true)
+            _ = navigationController.popViewController(animated: true)
         } else {
             controller.dismiss()
         }

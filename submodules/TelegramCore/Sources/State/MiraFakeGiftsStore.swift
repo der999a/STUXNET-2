@@ -132,8 +132,15 @@ public struct MiraFakeGift: Codable, Equatable {
         guard namespace == Namespaces.Peer.CloudUser || namespace == Namespaces.Peer.CloudGroup || namespace == Namespaces.Peer.CloudChannel || namespace == Namespaces.Peer.SecretChat else {
             return nil
         }
-        let idBits = ((bits >> 35) << 32) | (bits & 0xffffffff)
-        let idValue = Int64(bitPattern: idBits)
+        let idValue: Int64
+        if namespace == Namespaces.Peer.SecretChat && ((bits >> 35) & 0xffffffff) == 0 {
+            // Match Postbox's legacy namespace-3 codec: its low word is a
+            // signed Int32, including negative ids.
+            idValue = Int64(Int32(bitPattern: UInt32(bits & 0xffffffff)))
+        } else {
+            let idBits = ((bits >> 35) << 32) | (bits & 0xffffffff)
+            idValue = Int64(bitPattern: idBits)
+        }
         guard idValue >= -0x007fffffffffffff && idValue <= 0x00ffffffffffffff else {
             return nil
         }
