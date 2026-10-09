@@ -116,25 +116,21 @@ public final class MiraMessageHistoryStore {
     private static func isValidPackedPeerId(_ value: Int64) -> Bool {
         let data = UInt64(bitPattern: value)
         let namespace = (data >> 32) & 0x7
-        let rawId: UInt64
-        let legacyGroup = ((data >> 35) & 0xffffffff) == 0 && namespace == 3
-        if legacyGroup {
-            // Legacy groups use a sign-extended Int32 in the low word.
-            let low = UInt32(data & 0xffffffff)
-            rawId = UInt64(bitPattern: Int64(Int32(bitPattern: low)))
-        } else {
-            rawId = ((data >> 35) << 32) | (data & 0xffffffff)
-            guard rawId <= 0x00ffffffffffffff else {
-                return false
-            }
-        }
+        let offsetIdHighBits = (data >> (32 + 3)) & 0xffffffff
+        let idHighBits = offsetIdHighBits << 32
+        let lowBits = data & 0xffffffff
+        let legacyGroup = idHighBits == 0 && namespace == 3
         // Mirror PeerId's constructor/packing path to reject values that would
         // trip its round-trip assertion in debug builds.
         let reconstructed: UInt64
         if legacyGroup {
-            reconstructed = UInt64(bitPattern: Int64(Int32(bitPattern: UInt32(rawId)))) | (namespace << 32)
+            reconstructed = (namespace << 32) | lowBits
         } else {
-            reconstructed = (namespace << 32) | ((rawId >> 32) << 35) | (rawId & 0xffffffff)
+            let idAbs = idHighBits | lowBits
+            guard idAbs <= 0x00ffffffffffffff else {
+                return false
+            }
+            reconstructed = (namespace << 32) | ((idAbs >> 32) << 35) | (idAbs & 0xffffffff)
         }
         return reconstructed == data
     }
