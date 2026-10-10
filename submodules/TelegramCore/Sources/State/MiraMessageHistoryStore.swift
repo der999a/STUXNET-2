@@ -181,6 +181,20 @@ public struct FakeMessageRecord: Codable, Equatable {
     }
 }
 
+/// Versioned compact snapshot for local fake messages. The store still accepts
+/// the original bare array format so upgrading the Telegram client never
+/// strands an older local conversation.
+public struct MiraFakeMessagesSnapshot: Codable, Equatable {
+    public static let currentSchemaVersion = 1
+    public let schemaVersion: Int
+    public let records: [FakeMessageRecord]
+
+    public init(schemaVersion: Int = MiraFakeMessagesSnapshot.currentSchemaVersion, records: [FakeMessageRecord] = []) {
+        self.schemaVersion = schemaVersion
+        self.records = records
+    }
+}
+
 public final class MiraMessageHistoryStore {
     private struct FakeMessageJournalEntry: Codable {
         let records: [FakeMessageRecord]?
@@ -213,6 +227,7 @@ public final class MiraMessageHistoryStore {
     private var didLoadOverrides = false
     private var fakeCache: [FakeMessageRecord] = []
     private var didLoadFakes = false
+    private var fakeMessagesReadOnly = false
 
     private let fakeMessagesChangesPromise = ValuePromise<[FakeMessageRecord]>([], ignoreRepeated: true)
 
@@ -318,6 +333,8 @@ public final class MiraMessageHistoryStore {
 
     public func clear() {
         self.queue.async {
+            self.loadFakesIfNeeded()
+            guard !self.fakeMessagesReadOnly else { return }
             self.cache.removeAll()
             self.overrideCache.removeAll()
             self.fakeCache.removeAll()
@@ -403,7 +420,25 @@ public final class MiraMessageHistoryStore {
             return
         }
         self.didLoadFakes = true
-        if let data = FileManager.default.contents(atPath: self.fakeMessagesFilePath), let records = try? JSONDecoder().decode([FakeMessageRecord].self, from: data) {
+        let snapshotData = FileManager.default.contents(atPath: self.fakeMessagesFilePath)
+        if let data = snapshotData, let snapshot = try? JSONDecoder().decode(MiraFakeMessagesSnapshot.self, from: data) {
+            let records = snapshot.records
+            self.fakeMessagesReadOnly = snapshot.schemaVersion > MiraFakeMessagesSnapshot.currentSchemaVersion
+            // Future schemas are kept readable for the journal replay below;
+            // unknown fields are ignored by Codable and old clients never
+            // overwrite them until a supported migration is added.
+            var seenIds = Set<String>()
+            self.fakeCache = records.filter { record in
+                guard !record.id.isEmpty, record.messageNamespace == Namespaces.Message.Local, MiraMessageHistoryStore.isValidPackedPeerId(record.messagePeerId) else {
+                    return false
+                }
+                guard !seenIds.contains(record.id) else {
+                    return false
+                }
+                seenIds.insert(record.id)
+                return true
+            }
+        } else if let data = snapshotData, let records = try? JSONDecoder().decode([FakeMessageRecord].self, from: data) {
             // Older/corrupt files must not be allowed to feed invalid namespaces or duplicate
             // identifiers into message deletion and context-menu lookups.
             var seenIds = Set<String>()
@@ -417,6 +452,11 @@ public final class MiraMessageHistoryStore {
                 seenIds.insert(record.id)
                 return true
             }
+        } else if snapshotData != nil {
+            // Do not let a malformed snapshot be replaced by the next edit.
+            // The journal remains available for recovery, but this client must
+            // stay read-only until a compatible migration exists.
+            self.fakeMessagesReadOnly = true
         }
         if let data = FileManager.default.contents(atPath: self.fakeMessagesJournalPath), let content = String(data: data, encoding: .utf8) {
             var recordsById = Dictionary(uniqueKeysWithValues: self.fakeCache.map { ($0.id, $0) })
@@ -482,7 +522,7 @@ public final class MiraMessageHistoryStore {
     /// harmless after a force quit and avoids replaying an unbounded history
     /// every time the chat list is opened.
     private func persistFakeSnapshotLocked() {
-        guard let data = try? JSONEncoder().encode(self.fakeCache) else {
+        guard let data = try? JSONEncoder().encode(MiraFakeMessagesSnapshot(records: self.fakeCache)) else {
             return
         }
         try? data.write(to: URL(fileURLWithPath: self.fakeMessagesFilePath), options: [.atomic])
@@ -536,6 +576,7 @@ public final class MiraMessageHistoryStore {
         }
         self.queue.sync {
             self.loadFakesIfNeeded()
+            guard !self.fakeMessagesReadOnly else { return }
             var existingIds = Set(self.fakeCache.map(\.id))
             var inserted: [FakeMessageRecord] = []
             for record in records where !record.id.isEmpty && record.messageNamespace == Namespaces.Message.Local {
@@ -558,6 +599,7 @@ public final class MiraMessageHistoryStore {
     public func updateFakeMessage(_ record: FakeMessageRecord) -> Bool {
         return self.queue.sync {
             self.loadFakesIfNeeded()
+            guard !self.fakeMessagesReadOnly else { return false }
             guard let index = self.fakeCache.firstIndex(where: { $0.id == record.id }) else {
                 return false
             }
@@ -585,6 +627,7 @@ public final class MiraMessageHistoryStore {
     public func setFakeMessageRead(id: String, isRead: Bool) -> Bool {
         return self.queue.sync {
             self.loadFakesIfNeeded()
+            guard !self.fakeMessagesReadOnly else { return false }
             guard let index = self.fakeCache.firstIndex(where: { $0.id == id }) else {
                 return false
             }
@@ -600,8 +643,16 @@ public final class MiraMessageHistoryStore {
     }
 
     public func removeFakeMessage(id: String) {
-        self.queue.async {
+        // Keep the durable store in lockstep with Postbox mutations. Callers
+        // remove the local Postbox row and this record in the same engine
+        // operation; returning before the journal is written allows a fast
+        // reopen to resurrect the message from the snapshot.
+        self.queue.sync {
             self.loadFakesIfNeeded()
+            guard !self.fakeMessagesReadOnly else { return }
+            guard self.fakeCache.contains(where: { $0.id == id }) else {
+                return
+            }
             self.fakeCache.removeAll(where: { $0.id == id })
             self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: nil, removedIds: [id]))
             self.persistFakeSnapshotLocked()
@@ -613,9 +664,13 @@ public final class MiraMessageHistoryStore {
         guard !ids.isEmpty else {
             return
         }
-        self.queue.async {
+        self.queue.sync {
             self.loadFakesIfNeeded()
+            guard !self.fakeMessagesReadOnly else { return }
             let idSet = Set(ids)
+            guard self.fakeCache.contains(where: { idSet.contains($0.id) }) else {
+                return
+            }
             self.fakeCache.removeAll(where: { idSet.contains($0.id) })
             self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: nil, removedIds: ids))
             self.persistFakeSnapshotLocked()

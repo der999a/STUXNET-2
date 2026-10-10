@@ -116,15 +116,22 @@ private func stuxnetItemListController<Entry: ItemListNodeEntry>(context: Accoun
 }
 
 private final class StuxnetOptionsPickerArguments<T: Equatable> {
+    let context: AccountContext
     let select: (T) -> Void
+    let previewFont: ((T) -> UIFont?)?
+    let previewText: String
 
-    init(select: @escaping (T) -> Void) {
+    init(context: AccountContext, select: @escaping (T) -> Void, previewFont: ((T) -> UIFont?)?, previewText: String) {
+        self.context = context
         self.select = select
+        self.previewFont = previewFont
+        self.previewText = previewText
     }
 }
 
 private enum StuxnetOptionsPickerEntry<T: Equatable>: ItemListNodeEntry {
     case option(Int, T, String, Bool)
+    case preview(T)
     case footer(String)
 
     var section: ItemListSectionId {
@@ -135,6 +142,8 @@ private enum StuxnetOptionsPickerEntry<T: Equatable>: ItemListNodeEntry {
         switch self {
         case let .option(index, _, _, _):
             return index
+        case .preview:
+            return Int.max - 1
         case .footer:
             return Int.max
         }
@@ -151,20 +160,24 @@ private enum StuxnetOptionsPickerEntry<T: Equatable>: ItemListNodeEntry {
             return ItemListCheckboxItem(presentationData: presentationData, systemStyle: .glass, title: title, style: .right, checked: isSelected, zeroSeparatorInsets: false, sectionId: self.section, action: {
                 arguments.select(value)
             })
+        case let .preview(value):
+            let font = arguments.previewFont?(value) ?? Font.regular(17.0)
+            let preview = NSAttributedString(string: arguments.previewText, font: font, textColor: presentationData.theme.list.freeTextColor, paragraphAlignment: .center)
+            return ItemListTextItem(presentationData: presentationData, text: .custom(context: arguments.context, string: preview), sectionId: self.section, textAlignment: .center)
         case let .footer(text):
             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         }
     }
 }
 
-private func stuxnetOptionsPickerController<T: Equatable>(context: AccountContext, title: String, options: [(T, String)], currentValue: @escaping (MiraSettings) -> T, updateValue: @escaping (inout MiraSettings, T) -> Void, footer: String? = nil) -> ViewController {
+private func stuxnetOptionsPickerController<T: Equatable>(context: AccountContext, title: String, options: [(T, String)], currentValue: @escaping (MiraSettings) -> T, updateValue: @escaping (inout MiraSettings, T) -> Void, footer: String? = nil, previewFont: ((T) -> UIFont?)? = nil, previewText: String = "Aa Bb Cc 0123") -> ViewController {
     let accountManager = context.sharedContext.accountManager
 
-    let arguments = StuxnetOptionsPickerArguments<T>(select: { value in
+    let arguments = StuxnetOptionsPickerArguments<T>(context: context, select: { value in
         let _ = updateMiraSettingsInteractively(accountManager: accountManager, { settings in
             updateValue(&settings, value)
         }).start()
-    })
+    }, previewFont: previewFont, previewText: previewText)
 
     let signal = combineLatest(context.sharedContext.presentationData, miraSettingsSignal(accountManager: accountManager))
     |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
@@ -175,6 +188,9 @@ private func stuxnetOptionsPickerController<T: Equatable>(context: AccountContex
         for (value, optionTitle) in options {
             entries.append(.option(index, value, optionTitle, value == current))
             index += 1
+        }
+        if previewFont != nil {
+            entries.append(.preview(current))
         }
         if let footer {
             entries.append(.footer(footer))
@@ -314,6 +330,8 @@ private enum StuxnetHubEntry: ItemListNodeEntry {
     case privacy
     case spy
     case fake
+    case localChannels
+    case localProfile
     case voiceChanger(Bool)
     case appearance
     case resetAll
@@ -321,7 +339,7 @@ private enum StuxnetHubEntry: ItemListNodeEntry {
 
     var section: ItemListSectionId {
         switch self {
-        case .ghost, .privacy, .spy, .fake, .voiceChanger, .appearance:
+        case .ghost, .privacy, .spy, .fake, .localChannels, .localProfile, .voiceChanger, .appearance:
             return StuxnetHubSection.main.rawValue
         case .resetAll, .versionInfo:
             return StuxnetHubSection.actions.rawValue
@@ -338,14 +356,18 @@ private enum StuxnetHubEntry: ItemListNodeEntry {
             return 2
         case .fake:
             return 3
-        case .voiceChanger:
+        case .localChannels:
             return 4
-        case .appearance:
+        case .localProfile:
             return 5
-        case .resetAll:
+        case .voiceChanger:
             return 6
-        case .versionInfo:
+        case .appearance:
             return 7
+        case .resetAll:
+            return 8
+        case .versionInfo:
+            return 9
         }
     }
 
@@ -371,6 +393,14 @@ private enum StuxnetHubEntry: ItemListNodeEntry {
         case .fake:
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: PresentationResourcesSettings.premium, title: "Fake Features", label: "", sectionId: self.section, style: .blocks, action: {
                 arguments.pushController(stuxnetFakeSettingsController(context: arguments.context))
+            })
+        case .localChannels:
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: nil, title: "Local Channels", label: "Builder", sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetFakeChannelsController(context: arguments.context))
+            })
+        case .localProfile:
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: nil, title: "Local Profile", label: "Username / phone", sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetLocalProfilePreviewController(context: arguments.context))
             })
         case let .voiceChanger(isEnabled):
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: PresentationResourcesSettings.voices, title: "Voice Changer", label: isEnabled ? "On" : "Off", sectionId: self.section, style: .blocks, action: {
@@ -407,6 +437,8 @@ private func stuxnetHubEntries(settings: MiraSettings, accountPeerId: PeerId) ->
     entries.append(.privacy)
     entries.append(.spy)
     entries.append(.fake)
+    entries.append(.localChannels)
+    entries.append(.localProfile)
     entries.append(.voiceChanger(settings.voiceChangerEnabled))
     entries.append(.appearance)
     entries.append(.resetAll)
@@ -724,6 +756,303 @@ private func stuxnetGhostSettingsController(context: AccountContext) -> ViewCont
 
 // MARK: - Privacy & Presence
 
+private final class StuxnetLocalPeerOverridesListArguments {
+    let openEditor: (Int64?) -> Void
+
+    init(openEditor: @escaping (Int64?) -> Void) {
+        self.openEditor = openEditor
+    }
+}
+
+private enum StuxnetLocalPeerOverridesListEntry: ItemListNodeEntry {
+    case add
+    case peer(Int64, MiraLocalPeerOverride)
+    case info
+
+    var section: ItemListSectionId {
+        switch self {
+        case .add, .peer:
+            return 0
+        case .info:
+            return 1
+        }
+    }
+
+    var stableId: Int {
+        switch self {
+        case .add:
+            return 0
+        case let .peer(peerId, _):
+            return Int(truncatingIfNeeded: peerId) &+ 1
+        case .info:
+            return Int.max
+        }
+    }
+
+    static func < (lhs: StuxnetLocalPeerOverridesListEntry, rhs: StuxnetLocalPeerOverridesListEntry) -> Bool {
+        return lhs.stableId < rhs.stableId
+    }
+
+    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+        let arguments = arguments as! StuxnetLocalPeerOverridesListArguments
+        switch self {
+        case .add:
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Add Local Override", label: "", sectionId: self.section, style: .blocks, action: {
+                arguments.openEditor(nil)
+            })
+        case let .peer(peerId, override):
+            let title = override.displayName ?? override.username.map { "@\($0)" } ?? "Peer \(peerId)"
+            let details = [override.role == .none ? nil : override.role.displayName, override.tag.map { "@\($0)" }, override.phone].compactMap { $0 }
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: details.joined(separator: " · "), labelStyle: .detailText, sectionId: self.section, style: .blocks, action: {
+                arguments.openEditor(peerId)
+            })
+        case .info:
+            return ItemListTextItem(presentationData: presentationData, text: .plain("Local presentation only. These values do not change Telegram account data, permissions, or server requests."), sectionId: self.section)
+        }
+    }
+}
+
+private func stuxnetPeerRoleOverridesController(context: AccountContext) -> ViewController {
+    var pushControllerImpl: ((ViewController) -> Void)?
+    let arguments = StuxnetLocalPeerOverridesListArguments(openEditor: { peerId in
+        pushControllerImpl?(stuxnetLocalPeerOverrideEditorController(context: context, peerId: peerId))
+    })
+    let signal = combineLatest(context.sharedContext.presentationData, miraSettingsSignal(accountManager: context.sharedContext.accountManager))
+    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        var entries: [StuxnetLocalPeerOverridesListEntry] = [.add]
+        let overrides = settings.localPeerOverrides.compactMap { key, value -> (Int64, MiraLocalPeerOverride)? in
+            guard let peerId = Int64(key) else {
+                return nil
+            }
+            return (peerId, value)
+        }.sorted { lhs, rhs in
+            lhs.0 < rhs.0
+        }
+        for (peerId, value) in overrides {
+            entries.append(.peer(peerId, value))
+        }
+        entries.append(.info)
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Local Profile Overrides"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
+        return (controllerState, (listState, arguments))
+    }
+    let controller = ItemListController(context: context, state: signal)
+    pushControllerImpl = { [weak controller] child in
+        (controller?.navigationController as? NavigationController)?.pushViewController(child)
+    }
+    return controller
+}
+
+private final class StuxnetLocalPeerOverrideEditorState {
+    var peerId: String
+    var username: String
+    var tag: String
+    var phone: String
+    var firstName: String
+    var lastName: String
+    var role: MiraLocalPeerRole
+    var hasInitialized = false
+
+    init(peerId: String, override: MiraLocalPeerOverride?) {
+        self.peerId = peerId
+        self.username = override?.username ?? ""
+        self.tag = override?.tag ?? ""
+        self.phone = override?.phone ?? ""
+        self.firstName = override?.firstName ?? ""
+        self.lastName = override?.lastName ?? ""
+        self.role = override?.role ?? .none
+    }
+}
+
+private final class StuxnetLocalPeerOverrideEditorArguments {
+    let state: StuxnetLocalPeerOverrideEditorState
+    let originalPeerId: Int64?
+    let update: () -> Void
+    let save: () -> Void
+    let delete: () -> Void
+
+    init(state: StuxnetLocalPeerOverrideEditorState, originalPeerId: Int64?, update: @escaping () -> Void, save: @escaping () -> Void, delete: @escaping () -> Void) {
+        self.state = state
+        self.originalPeerId = originalPeerId
+        self.update = update
+        self.save = save
+        self.delete = delete
+    }
+}
+
+private enum StuxnetLocalPeerOverrideEditorEntry: ItemListNodeEntry {
+    case peerId(String)
+    case username(String)
+    case tag(String)
+    case phone(String)
+    case firstName(String)
+    case lastName(String)
+    case roleHeader
+    case role(MiraLocalPeerRole, Bool)
+    case delete
+    case info
+
+    var section: ItemListSectionId {
+        switch self {
+        case .peerId, .username, .tag, .phone, .firstName, .lastName:
+            return 0
+        case .roleHeader, .role:
+            return 1
+        case .delete:
+            return 2
+        case .info:
+            return 3
+        }
+    }
+
+    var stableId: Int {
+        switch self {
+        case .peerId: return 0
+        case .username: return 1
+        case .tag: return 2
+        case .phone: return 3
+        case .firstName: return 4
+        case .lastName: return 5
+        case .roleHeader: return 6
+        case let .role(role, _):
+            switch role {
+            case .none: return 7
+            case .owner: return 8
+            case .administrator: return 9
+            }
+        case .delete: return 10
+        case .info: return 11
+        }
+    }
+
+    static func < (lhs: StuxnetLocalPeerOverrideEditorEntry, rhs: StuxnetLocalPeerOverrideEditorEntry) -> Bool {
+        return lhs.stableId < rhs.stableId
+    }
+
+    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+        let arguments = arguments as! StuxnetLocalPeerOverrideEditorArguments
+        switch self {
+        case let .peerId(text):
+            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "Peer ID"), text: text, placeholder: "Telegram peer ID", type: .regular(capitalization: false, autocorrection: false), sectionId: self.section, textUpdated: { value in
+                arguments.state.peerId = value
+                arguments.update()
+            }, action: {})
+        case let .username(text):
+            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "Username"), text: text, placeholder: "@username", type: .regular(capitalization: false, autocorrection: false), sectionId: self.section, textUpdated: { value in
+                arguments.state.username = value
+                arguments.update()
+            }, action: {})
+        case let .tag(text):
+            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "Display tag"), text: text, placeholder: "@tag", type: .regular(capitalization: false, autocorrection: false), sectionId: self.section, textUpdated: { value in
+                arguments.state.tag = value
+                arguments.update()
+            }, action: {})
+        case let .phone(text):
+            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "Phone"), text: text, placeholder: "+1 555 0100", type: .regular(capitalization: false, autocorrection: false), sectionId: self.section, textUpdated: { value in
+                arguments.state.phone = value
+                arguments.update()
+            }, action: {})
+        case let .firstName(text):
+            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "First name"), text: text, placeholder: "Local first name", type: .regular(capitalization: true, autocorrection: false), sectionId: self.section, textUpdated: { value in
+                arguments.state.firstName = value
+                arguments.update()
+            }, action: {})
+        case let .lastName(text):
+            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "Last name"), text: text, placeholder: "Local last name", type: .regular(capitalization: true, autocorrection: false), sectionId: self.section, textUpdated: { value in
+                arguments.state.lastName = value
+                arguments.update()
+            }, action: {})
+        case .roleHeader:
+            return ItemListSectionHeaderItem(presentationData: presentationData, text: "LOCAL ROLE", sectionId: self.section)
+        case let .role(role, selected):
+            return ItemListCheckboxItem(presentationData: presentationData, systemStyle: .glass, title: role.displayName, style: .right, checked: selected, zeroSeparatorInsets: false, sectionId: self.section, action: {
+                arguments.state.role = role
+                arguments.update()
+            })
+        case .delete:
+            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: "Remove Override", kind: .destructive, alignment: .center, sectionId: self.section, style: .blocks, action: {
+                arguments.delete()
+            })
+        case .info:
+            return ItemListTextItem(presentationData: presentationData, text: .plain("Use the numeric peer ID from Telegram diagnostics. Role labels affect local display only and never grant permissions."), sectionId: self.section)
+        }
+    }
+}
+
+private func stuxnetLocalPeerOverrideEditorController(context: AccountContext, peerId: Int64?) -> ViewController {
+    let state = StuxnetLocalPeerOverrideEditorState(peerId: peerId.map(String.init) ?? "", override: nil)
+    let revision = ValuePromise<Int>(0)
+    var revisionValue = 0
+    var dismissImpl: (() -> Void)?
+    let update: () -> Void = {
+        revisionValue += 1
+        revision.set(revisionValue)
+    }
+    let save: () -> Void = {
+        guard let newPeerId = Int64(state.peerId.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return
+        }
+        let value = MiraLocalPeerOverride(username: state.username, tag: state.tag, phone: state.phone, firstName: state.firstName, lastName: state.lastName, role: state.role)
+        let _ = updateMiraSettingsInteractively(accountManager: context.sharedContext.accountManager, { settings in
+            if let peerId, peerId != newPeerId {
+                settings.removeLocalPeerOverride(forPeerId: peerId)
+            }
+            settings.setLocalPeerOverride(value, forPeerId: newPeerId)
+        }).start()
+        dismissImpl?()
+    }
+    let delete: () -> Void = {
+        guard let peerId else {
+            return
+        }
+        let _ = updateMiraSettingsInteractively(accountManager: context.sharedContext.accountManager, { settings in
+            settings.removeLocalPeerOverride(forPeerId: peerId)
+        }).start()
+        dismissImpl?()
+    }
+    let arguments = StuxnetLocalPeerOverrideEditorArguments(state: state, originalPeerId: peerId, update: update, save: save, delete: delete)
+    let signal = combineLatest(context.sharedContext.presentationData, miraSettingsSignal(accountManager: context.sharedContext.accountManager), revision.get())
+    |> map { presentationData, settings, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        if !state.hasInitialized {
+            let existing = peerId.flatMap { settings.localPeerOverride(forPeerId: $0) }
+            state.username = existing?.username ?? ""
+            state.tag = existing?.tag ?? ""
+            state.phone = existing?.phone ?? ""
+            state.firstName = existing?.firstName ?? ""
+            state.lastName = existing?.lastName ?? ""
+            state.role = existing?.role ?? .none
+            state.hasInitialized = true
+        }
+        let validPeerId = Int64(state.peerId.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(peerId == nil ? "Add Local Override" : "Edit Local Override"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: .regular, enabled: validPeerId, action: {
+            save()
+        }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
+        var entries: [StuxnetLocalPeerOverrideEditorEntry] = [
+            .peerId(state.peerId),
+            .username(state.username),
+            .tag(state.tag),
+            .phone(state.phone),
+            .firstName(state.firstName),
+            .lastName(state.lastName),
+            .roleHeader,
+            .role(.none, state.role == .none),
+            .role(.owner, state.role == .owner),
+            .role(.administrator, state.role == .administrator)
+        ]
+        if peerId != nil {
+            entries.append(.delete)
+        }
+        entries.append(.info)
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks)
+        return (controllerState, (listState, arguments))
+    }
+    let controller = ItemListController(context: context, state: signal)
+    dismissImpl = { [weak controller] in
+        (controller?.navigationController as? NavigationController)?.popViewController(animated: true)
+    }
+    return controller
+}
+
 private enum StuxnetPrivacySection: Int32 {
     case main
     case confirmations
@@ -732,6 +1061,7 @@ private enum StuxnetPrivacySection: Int32 {
 private enum StuxnetPrivacyEntry: ItemListNodeEntry {
     case showLocalOnline(Bool)
     case showRealLastSeen(Bool)
+    case localPeerOverrides(Int)
     case autoClearClipboard(Bool)
     case hidePhoneNumber(Bool)
     case showPeerId(Bool)
@@ -751,7 +1081,7 @@ private enum StuxnetPrivacyEntry: ItemListNodeEntry {
 
     var section: ItemListSectionId {
         switch self {
-        case .showLocalOnline, .showRealLastSeen, .autoClearClipboard, .hidePhoneNumber, .showPeerId, .filterZalgo, .screenshotEvasion, .streamerMode, .securityInfo:
+        case .showLocalOnline, .showRealLastSeen, .localPeerOverrides, .autoClearClipboard, .hidePhoneNumber, .showPeerId, .filterZalgo, .screenshotEvasion, .streamerMode, .securityInfo:
             return StuxnetPrivacySection.main.rawValue
         case .confirmationsHeader, .confirmJoinChannel, .confirmViewStory, .confirmCall, .confirmSendSticker, .confirmSendGif, .confirmSendVoice, .confirmationsInfo:
             return StuxnetPrivacySection.confirmations.rawValue
@@ -764,36 +1094,38 @@ private enum StuxnetPrivacyEntry: ItemListNodeEntry {
             return 0
         case .showRealLastSeen:
             return 1
-        case .autoClearClipboard:
+        case .localPeerOverrides:
             return 2
-        case .hidePhoneNumber:
+        case .autoClearClipboard:
             return 3
-        case .showPeerId:
+        case .hidePhoneNumber:
             return 4
-        case .filterZalgo:
+        case .showPeerId:
             return 5
-        case .screenshotEvasion:
+        case .filterZalgo:
             return 6
-        case .streamerMode:
+        case .screenshotEvasion:
             return 7
-        case .securityInfo:
+        case .streamerMode:
             return 8
-        case .confirmationsHeader:
+        case .securityInfo:
             return 9
-        case .confirmJoinChannel:
+        case .confirmationsHeader:
             return 10
-        case .confirmViewStory:
+        case .confirmJoinChannel:
             return 11
-        case .confirmCall:
+        case .confirmViewStory:
             return 12
-        case .confirmSendSticker:
+        case .confirmCall:
             return 13
-        case .confirmSendGif:
+        case .confirmSendSticker:
             return 14
-        case .confirmSendVoice:
+        case .confirmSendGif:
             return 15
-        case .confirmationsInfo:
+        case .confirmSendVoice:
             return 16
+        case .confirmationsInfo:
+            return 17
         }
     }
 
@@ -815,6 +1147,11 @@ private enum StuxnetPrivacyEntry: ItemListNodeEntry {
                 arguments.updateSettings { settings in
                     settings.showRealLastSeen = value
                 }
+            })
+        case let .localPeerOverrides(count):
+            let label = count == 0 ? "Not configured" : "\(count) \(count == 1 ? "profile" : "profiles")"
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Local Profile & Role Overrides", label: label, sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetPeerRoleOverridesController(context: arguments.context))
             })
         case let .autoClearClipboard(value):
             return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "Auto-Clear Clipboard", value: value, sectionId: self.section, style: .blocks, updated: { value in
@@ -902,6 +1239,7 @@ private func stuxnetPrivacyEntries(settings: MiraSettings) -> [StuxnetPrivacyEnt
     var entries: [StuxnetPrivacyEntry] = []
     entries.append(.showLocalOnline(settings.showLocalOnline))
     entries.append(.showRealLastSeen(settings.showRealLastSeen))
+    entries.append(.localPeerOverrides(settings.localPeerOverrides.count))
     entries.append(.autoClearClipboard(settings.autoClearClipboard))
     entries.append(.hidePhoneNumber(settings.hidePhoneNumber))
     entries.append(.showPeerId(settings.showPeerId))
@@ -1133,6 +1471,7 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
     case fakeStarsEnabled(Bool)
     case fakeStarsBalance(String)
     case fakeStarsHistory
+    case fakeStarsStats
 
     case giftsHeader(String)
     case fakeGiftsEnabled(Bool)
@@ -1147,7 +1486,7 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
         switch self {
         case .localPremium, .fakePremiumSince:
             return StuxnetFakeSection.premium.rawValue
-        case .starsHeader, .fakeStarsEnabled, .fakeStarsBalance, .fakeStarsHistory:
+        case .starsHeader, .fakeStarsEnabled, .fakeStarsBalance, .fakeStarsHistory, .fakeStarsStats:
             return StuxnetFakeSection.stars.rawValue
         case .giftsHeader, .fakeGiftsEnabled, .fakeGiftCount, .manageFakeGifts:
             return StuxnetFakeSection.gifts.rawValue
@@ -1170,20 +1509,22 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
             return 4
         case .fakeStarsHistory:
             return 5
-        case .giftsHeader:
+        case .fakeStarsStats:
             return 6
-        case .fakeGiftsEnabled:
+        case .giftsHeader:
             return 7
-        case .fakeGiftCount:
+        case .fakeGiftsEnabled:
             return 8
-        case .manageFakeGifts:
+        case .fakeGiftCount:
             return 9
-        case .ratingHeader:
+        case .manageFakeGifts:
             return 10
-        case .fakeRatingEnabled:
+        case .ratingHeader:
             return 11
-        case .fakeRatingValue:
+        case .fakeRatingEnabled:
             return 12
+        case .fakeRatingValue:
+            return 13
         }
     }
 
@@ -1226,6 +1567,10 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
         case .fakeStarsHistory:
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Stars transaction history", label: "Local", sectionId: self.section, style: .blocks, action: {
                 arguments.pushController(stuxnetFakeStarsLedgerController(context: arguments.context))
+            })
+        case .fakeStarsStats:
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Stars statistics", label: "Local", sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetFakeStarsStatsController(context: arguments.context))
             })
         case let .giftsHeader(text):
             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
@@ -1277,6 +1622,7 @@ private func stuxnetFakeEntries(settings: MiraSettings, ledgerBalance: Int64? = 
     entries.append(.fakeStarsEnabled(settings.fakeStarsEnabled))
     entries.append(.fakeStarsBalance(stuxnetFormattedNumber(ledgerBalance ?? settings.fakeStarsBalance)))
     entries.append(.fakeStarsHistory)
+    entries.append(.fakeStarsStats)
 
     entries.append(.giftsHeader("Gifts".uppercased()))
     entries.append(.fakeGiftsEnabled(settings.fakeGiftsEnabled))
@@ -1349,6 +1695,10 @@ private func stuxnetFakeStarsLedgerKindTitle(_ kind: MiraFakeStarsLedgerEntryKin
         return "Gift conversion"
     case .fakeStarsMessage:
         return "Fake Stars message"
+    case .fakeChannelPost:
+        return "Fake channel post Stars"
+    case .fakeChannelReaction:
+        return "Fake channel reaction Stars"
     }
 }
 
@@ -1381,6 +1731,73 @@ private func stuxnetFakeStarsLedgerController(context: AccountContext) -> ViewCo
             animateChanges: true
         )
         return (controllerState, (ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks), NSNull()))
+    }
+    return ItemListController(context: context, state: signal)
+}
+
+private enum StuxnetFakeStarsStatsEntry: ItemListNodeEntry {
+    case header(String)
+    case metric(Int, String)
+
+    var section: ItemListSectionId { return 0 }
+    var stableId: Int {
+        switch self {
+        case .header: return 0
+        case let .metric(id, _): return id + 1
+        }
+    }
+    static func < (lhs: StuxnetFakeStarsStatsEntry, rhs: StuxnetFakeStarsStatsEntry) -> Bool { lhs.stableId < rhs.stableId }
+
+    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+        switch self {
+        case let .header(text):
+            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
+        case let .metric(_, text):
+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+        }
+    }
+}
+
+private func stuxnetFakeStarsStatsController(context: AccountContext) -> ViewController {
+    let signal = combineLatest(context.sharedContext.presentationData, context.account.miraFakeStarsLedger.changes)
+    |> map { presentationData, snapshot -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        func sum(_ values: [Int64]) -> Int64 {
+            return values.reduce(Int64(0)) { partial, value in
+                let result = partial.addingReportingOverflow(value)
+                return result.overflow ? (value >= 0 ? Int64.max : Int64.min) : result.partialValue
+            }
+        }
+        let incoming = sum(snapshot.entries.filter { $0.delta > 0 }.map(\.delta))
+        let outgoing = sum(snapshot.entries.filter { $0.delta < 0 }.map { $0.delta == Int64.min ? Int64.max : -$0.delta })
+        let conversions = snapshot.entries.filter { $0.kind == .fakeGiftConversion }
+        let transfers = snapshot.entries.filter { $0.kind == .fakeGiftTransfer }
+        let messageEntries = snapshot.entries.filter { $0.kind == .fakeStarsMessage && $0.note != "Deleted fake Stars message" }
+        let channelPostEntries = snapshot.entries.filter { $0.kind == .fakeChannelPost }
+        let channelReactionEntries = snapshot.entries.filter { $0.kind == .fakeChannelReaction }
+        let transferStars = sum(transfers.map { $0.delta == Int64.min ? Int64.max : -$0.delta })
+        let channelPostStars = sum(channelPostEntries.map(\.delta))
+        let channelReactionStars = sum(channelReactionEntries.map(\.delta))
+        let rows: [StuxnetFakeStarsStatsEntry] = [
+            .header("LOCAL STARS"),
+            .metric(0, "Current balance · \(stuxnetFormattedNumber(snapshot.balance)) Stars"),
+            .metric(1, "Total incoming · \(stuxnetFormattedNumber(incoming)) Stars"),
+            .metric(2, "Total outgoing · \(stuxnetFormattedNumber(outgoing)) Stars"),
+            .metric(3, "Gift conversions · \(conversions.count) / \(stuxnetFormattedNumber(sum(conversions.map(\.delta)))) Stars"),
+            .metric(4, "NFT transfers · \(transfers.count) / \(stuxnetFormattedNumber(transferStars)) Stars"),
+            .metric(5, "Fake Stars message events · \(messageEntries.count)"),
+            .metric(6, "Channel post Stars events · \(channelPostEntries.count) / \(stuxnetFormattedNumber(channelPostStars)) Stars"),
+            .metric(7, "Channel reaction Stars events · \(channelReactionEntries.count) / \(stuxnetFormattedNumber(channelReactionStars)) Stars"),
+            .metric(8, "Ledger entries · \(snapshot.entries.count)")
+        ]
+        let controllerState = ItemListControllerState(
+            presentationData: ItemListPresentationData(presentationData),
+            title: .text("Stars statistics"),
+            leftNavigationButton: nil,
+            rightNavigationButton: nil,
+            backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back),
+            animateChanges: true
+        )
+        return (controllerState, (ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: rows, style: .blocks), NSNull()))
     }
     return ItemListController(context: context, state: signal)
 }
@@ -1518,6 +1935,14 @@ private func stuxnetInterfaceFontOptionName(_ id: Int32) -> String {
     }
 }
 
+private func stuxnetInterfaceUIFont(_ id: Int32, size: CGFloat = 22.0) -> UIFont {
+    let name = stuxnetInterfaceFontOptionName(id)
+    if name == "System" {
+        return UIFont.systemFont(ofSize: size)
+    }
+    return UIFont(name: name, size: size) ?? UIFont.systemFont(ofSize: size)
+}
+
 private func stuxnetAvatarCornerStyleName(_ id: Int32) -> String {
     switch id {
     case 1:
@@ -1633,6 +2058,8 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
                     return Int64(settings.interfaceFont)
                 }, updateValue: { settings, value in
                     settings.interfaceFont = Int32(value)
+                }, footer: "Preview uses the selected system font. Telegram text rendering remains unchanged until the next appearance refresh.", previewFont: { value in
+                    return stuxnetInterfaceUIFont(Int32(value))
                 }))
             })
         case let .avatarCorners(label):
@@ -1671,10 +2098,10 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
             })
         case let .socialVideoDestination(label):
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Save to", label: label, sectionId: self.section, style: .blocks, action: {
-                arguments.pushController(stuxnetOptionsPickerController(context: arguments.context, title: "Save social videos to", options: MiraSocialVideoDestination.allCases.map { (Int64($0.rawValue), $0.title) }, currentValue: { settings in
+                arguments.pushController(stuxnetOptionsPickerController(context: arguments.context, title: "After downloading", options: MiraSocialVideoDestination.allCases.map { (Int64($0.rawValue), $0.title) }, currentValue: { settings in
                     return Int64(settings.socialVideoSettings.destination.rawValue)
                 }, updateValue: { settings, value in
-                    settings.socialVideoSettings.destination = MiraSocialVideoDestination(rawValue: Int32(value)) ?? .files
+                    settings.socialVideoSettings.destination = MiraSocialVideoDestination(rawValue: Int32(value)) ?? .chat
                 }))
             })
         case let .socialVideoPlatform(platform, value):

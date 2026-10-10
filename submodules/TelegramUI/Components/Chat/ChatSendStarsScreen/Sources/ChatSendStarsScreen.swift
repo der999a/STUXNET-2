@@ -963,6 +963,7 @@ private final class ChatSendStarsScreenComponent: Component {
         private var topOffsetDistance: CGFloat?
         
         private var balance: StarsAmount?
+        private var isFakeStarsPreview = false
         
         private var amount: Amount = Amount(realValue: 1, minRealValue: 1, maxRealValue: 1000, maxSliderValue: 1000, isLogarithmic: true)
         private var didChangeAmount: Bool = false
@@ -1388,6 +1389,7 @@ private final class ChatSendStarsScreenComponent: Component {
             defer {
                 self.isUpdating = false
             }
+            self.isFakeStarsPreview = component.context.sharedContext.immediateMiraSettings.fakeStarsEnabled
             
             let environment = environment[ViewControllerComponentContainer.Environment.self].value
             let themeUpdated = self.environment?.theme !== environment.theme
@@ -1424,6 +1426,9 @@ private final class ChatSendStarsScreenComponent: Component {
                             currency: .stars,
                             action: { [weak self] in
                                 guard let self, let component = self.component, let starsContext = context.starsContext, let navigationController = self.environment?.controller()?.navigationController as? NavigationController else {
+                                    return
+                                }
+                                guard !self.isFakeStarsPreview, !context.sharedContext.immediateMiraSettings.fakeStarsEnabled else {
                                     return
                                 }
                                 self.environment?.controller()?.dismiss()
@@ -1526,20 +1531,22 @@ private final class ChatSendStarsScreenComponent: Component {
                 }
                 
                 if let starsContext = component.context.starsContext {
-                    self.balanceDisposable = (starsContext.state
-                    |> deliverOnMainQueue).startStrict(next: { [weak self] state in
+                    self.balanceDisposable = (combineLatest(queue: Queue.mainQueue(), starsContext.state, component.context.account.miraFakeStarsLedger.changes, miraSettingsSignal(accountManager: component.context.sharedContext.accountManager))
+                    |> deliverOnMainQueue).startStrict(next: { [weak self] state, fakeStarsLedger, miraSettings in
                         guard let self else {
                             return
                         }
+                        let previousBalance = self.balance
+                        let wasFakeStarsPreview = self.isFakeStarsPreview
+                        self.isFakeStarsPreview = miraSettings.fakeStarsEnabled
                         if var state {
-                            let miraSettings = component.context.sharedContext.immediateMiraSettings
                             if miraSettings.fakeStarsEnabled {
-                                state.balance = StarsAmount(value: miraSettings.fakeStarsBalance, nanos: 0)
+                                state.balance = StarsAmount(value: fakeStarsLedger.balance, nanos: 0)
                             }
-                            if self.balance != state.balance {
-                                self.balance = state.balance
-                                self.state?.updated(transition: .immediate)
-                            }
+                            self.balance = state.balance
+                        }
+                        if previousBalance != self.balance || wasFakeStarsPreview != self.isFakeStarsPreview {
+                            self.state?.updated(transition: .immediate)
                         }
                     })
                 }
@@ -2516,7 +2523,8 @@ private final class ChatSendStarsScreenComponent: Component {
             case .liveStreamMessage:
                 buttonString = environment.strings.SendStarReactions_LiveStreamActionButton("\(self.amount.realValue)").string
             }
-            let buttonAttributedString = NSMutableAttributedString(string: buttonString, font: Font.semibold(17.0), textColor: environment.theme.list.itemCheckColors.foregroundColor, paragraphAlignment: .center)
+            let actionButtonString = self.isFakeStarsPreview ? "Fake Stars preview" : buttonString
+            let buttonAttributedString = NSMutableAttributedString(string: actionButtonString, font: Font.semibold(17.0), textColor: environment.theme.list.itemCheckColors.foregroundColor, paragraphAlignment: .center)
             if let range = buttonAttributedString.string.range(of: "#"), let starImage = self.cachedStarImage?.0 {
                 buttonAttributedString.addAttribute(.attachment, value: starImage, range: NSRange(range, in: buttonAttributedString.string))
                 buttonAttributedString.addAttribute(.foregroundColor, value: environment.theme.list.itemCheckColors.foregroundColor, range: NSRange(range, in: buttonAttributedString.string))
@@ -2539,10 +2547,13 @@ private final class ChatSendStarsScreenComponent: Component {
                         id: AnyHashable(0),
                         component: AnyComponent(MultilineTextComponent(text: .plain(buttonAttributedString)))
                     ),
-                    isEnabled: true,
+                    isEnabled: !self.isFakeStarsPreview,
                     displaysProgress: false,
                     action: { [weak self] in
                         guard let self, let component = self.component else {
+                            return
+                        }
+                        guard !self.isFakeStarsPreview, !component.context.sharedContext.immediateMiraSettings.fakeStarsEnabled else {
                             return
                         }
                         
@@ -2638,7 +2649,19 @@ private final class ChatSendStarsScreenComponent: Component {
             )
             
             var buttonDescriptionTextSize: CGSize?
-            if case .react = component.initialData.subjectInitialData {
+            if self.isFakeStarsPreview {
+                let description = NSAttributedString(string: "Fake Stars stay on this device. Paid reactions and live-stream messages use Telegram Stars, so sending is disabled in this mode.", font: Font.regular(13.0), textColor: environment.theme.list.itemSecondaryTextColor, paragraphAlignment: .center)
+                buttonDescriptionTextSize = self.buttonDescriptionText.update(
+                    transition: .immediate,
+                    component: AnyComponent(MultilineTextComponent(
+                        text: .plain(description),
+                        horizontalAlignment: .center,
+                        maximumNumberOfLines: 0
+                    )),
+                    environment: {},
+                    containerSize: CGSize(width: availableSize.width - sideInset, height: 1000.0)
+                )
+            } else if case .react = component.initialData.subjectInitialData {
                 buttonDescriptionTextSize = self.buttonDescriptionText.update(
                     transition: .immediate,
                     component: AnyComponent(MultilineTextComponent(
@@ -2696,6 +2719,8 @@ private final class ChatSendStarsScreenComponent: Component {
                     }
                     transition.setFrame(view: buttonDescriptionTextView, frame: buttonDescriptionTextFrame)
                 }
+            } else {
+                self.buttonDescriptionText.view?.removeFromSuperview()
             }
             
             contentHeight += bottomPanelHeight

@@ -1187,6 +1187,7 @@ private final class StarsTransactionsContextImpl {
     
     private let disposable = MetaDisposable()
     private var stateDisposable: Disposable?
+    private var ledgerDisposable: Disposable?
     
     init(account: Account, subject: StarsTransactionsContext.Subject, mode: StarsTransactionsContext.Mode) {
         assert(Queue.mainQueue().isCurrent())
@@ -1210,18 +1211,22 @@ private final class StarsTransactionsContextImpl {
             currentTransactions = []
         }
         self.mode = mode
-        
-        let initialTransactions: [StarsContext.State.Transaction]
+
+        let initialServerTransactions: [StarsContext.State.Transaction]
         switch mode {
         case .all:
-            initialTransactions = currentTransactions
+            initialServerTransactions = currentTransactions
         case .incoming:
-            initialTransactions = currentTransactions.filter { $0.count.amount > StarsAmount.zero }
+            initialServerTransactions = currentTransactions.filter { $0.count.amount > StarsAmount.zero }
         case .outgoing:
-            initialTransactions = currentTransactions.filter { $0.count.amount < StarsAmount.zero }
+            initialServerTransactions = currentTransactions.filter { $0.count.amount < StarsAmount.zero }
         }
-        
-        self._state = StarsTransactionsContext.State(transactions: initialTransactions, canLoadMore: true, isLoading: false)
+        // Initialize `_state` before asking the instance merger for local
+        // ledger entries. Swift forbids calling an instance method until all
+        // stored properties have been initialized.
+        self._state = StarsTransactionsContext.State(transactions: initialServerTransactions, canLoadMore: true, isLoading: false)
+        let initialTransactions = self.mergedTransactions(serverTransactions: initialServerTransactions, existingTransactions: [])
+        self._state.transactions = initialTransactions
         self._statePromise.set(.single(self._state))
         
         if case let .starsTransactionsContext(transactionsContext) = subject {
@@ -1230,23 +1235,11 @@ private final class StarsTransactionsContextImpl {
                 guard let self else {
                     return
                 }
-                let currentTransactions = state.transactions
-                let filteredTransactions: [StarsContext.State.Transaction]
-                switch mode {
-                case .all:
-                    filteredTransactions = currentTransactions
-                case .incoming:
-                    filteredTransactions = currentTransactions.filter { $0.count.amount > StarsAmount.zero }
-                case .outgoing:
-                    filteredTransactions = currentTransactions.filter { $0.count.amount < StarsAmount.zero }
-                }
-                
-                if !filteredTransactions.isEmpty && self._state.transactions.isEmpty  && filteredTransactions != initialTransactions {
+                let mergedTransactions = self.mergedTransactions(serverTransactions: state.transactions)
+
+                if mergedTransactions != self._state.transactions {
                     var updatedState = self._state
-                    updatedState.transactions.removeAll(where: { $0.flags.contains(.isLocal) })
-                    for transaction in filteredTransactions.reversed() {
-                        updatedState.transactions.insert(transaction, at: 0)
-                    }
+                    updatedState.transactions = mergedTransactions
                     self.updateState(updatedState)
                 }
             })
@@ -1257,42 +1250,40 @@ private final class StarsTransactionsContextImpl {
                     return
                 }
                 
-                let currentTransactions = state.transactions
-                let filteredTransactions: [StarsContext.State.Transaction]
-                switch mode {
-                case .all:
-                    filteredTransactions = currentTransactions
-                case .incoming:
-                    filteredTransactions = currentTransactions.filter { $0.count.amount > StarsAmount.zero }
-                case .outgoing:
-                    filteredTransactions = currentTransactions.filter { $0.count.amount < StarsAmount.zero }
-                }
-                
-                if filteredTransactions != initialTransactions {
-                    var existingIds = Set<String>()
-                    for transaction in self._state.transactions {
-                        if !transaction.flags.contains(.isLocal) {
-                            existingIds.insert(transaction.id)
-                        }
-                    }
-                    
+                let mergedTransactions = self.mergedTransactions(serverTransactions: state.transactions)
+                if mergedTransactions != self._state.transactions {
                     var updatedState = self._state
-                    updatedState.transactions.removeAll(where: { $0.flags.contains(.isLocal) })
-                    for transaction in filteredTransactions.reversed() {
-                        if !existingIds.contains(transaction.id) {
-                            updatedState.transactions.insert(transaction, at: 0)
-                        }
-                    }
+                    updatedState.transactions = mergedTransactions
                     self.updateState(updatedState)
                 }
             })
         }
+
+        // Fake Stars are account-local, but they must appear in the same
+        // transaction stream as Telegram entries. This subscription keeps
+        // All/Incoming/Outgoing and statistics screens live after a local
+        // message, gift conversion, or transfer fee is edited/deleted.
+        self.ledgerDisposable = (account.miraFakeStarsLedger.changes
+        |> deliverOnMainQueue).start(next: { [weak self] _ in
+            guard let self else {
+                return
+            }
+            let serverTransactions = self._state.transactions.filter { !$0.id.hasPrefix("mira-") }
+            let mergedTransactions = self.mergedTransactions(serverTransactions: serverTransactions)
+            guard mergedTransactions != self._state.transactions else {
+                return
+            }
+            var updatedState = self._state
+            updatedState.transactions = mergedTransactions
+            self.updateState(updatedState)
+        })
     }
     
     deinit {
         assert(Queue.mainQueue().isCurrent())
         self.disposable.dispose()
         self.stateDisposable?.dispose()
+        self.ledgerDisposable?.dispose()
     }
     
     func loadMore(reload: Bool = false) {
@@ -1318,7 +1309,13 @@ private final class StarsTransactionsContextImpl {
             self.nextOffset = status.nextTransactionsOffset
             
             var updatedState = self._state
-            updatedState.transactions = nextOffset.isEmpty ? status.transactions : updatedState.transactions + status.transactions
+            let serverTransactions: [StarsContext.State.Transaction]
+            if nextOffset.isEmpty {
+                serverTransactions = status.transactions
+            } else {
+                serverTransactions = updatedState.transactions.filter { !$0.flags.contains(.isLocal) } + status.transactions
+            }
+            updatedState.transactions = self.mergedTransactions(serverTransactions: serverTransactions, existingTransactions: updatedState.transactions)
             updatedState.isLoading = false
             updatedState.canLoadMore = self.nextOffset != nil
             self.updateState(updatedState)
@@ -1334,6 +1331,109 @@ private final class StarsTransactionsContextImpl {
     private func updateState(_ state: StarsTransactionsContext.State) {
         self._state = state
         self._statePromise.set(.single(state))
+    }
+
+    private func mergedTransactions(serverTransactions: [StarsContext.State.Transaction], existingTransactions: [StarsContext.State.Transaction]? = nil) -> [StarsContext.State.Transaction] {
+        let preservedLocal = (existingTransactions ?? self._state.transactions).filter {
+            $0.flags.contains(.isLocal) && !$0.id.hasPrefix("mira-")
+        }
+        let ledgerTransactions = self.localLedgerTransactions()
+        let filteredLedger: [StarsContext.State.Transaction]
+        switch self.mode {
+        case .all:
+            filteredLedger = ledgerTransactions
+        case .incoming:
+            filteredLedger = ledgerTransactions.filter { $0.count.amount > StarsAmount.zero }
+        case .outgoing:
+            filteredLedger = ledgerTransactions.filter { $0.count.amount < StarsAmount.zero }
+        }
+
+        let filteredServer: [StarsContext.State.Transaction]
+        switch self.mode {
+        case .all:
+            filteredServer = serverTransactions
+        case .incoming:
+            filteredServer = serverTransactions.filter { $0.count.amount > StarsAmount.zero }
+        case .outgoing:
+            filteredServer = serverTransactions.filter { $0.count.amount < StarsAmount.zero }
+        }
+
+        var result: [StarsContext.State.Transaction] = []
+        var ids = Set<String>()
+        for transaction in (preservedLocal + filteredLedger + filteredServer) {
+            guard !ids.contains(transaction.id) else {
+                continue
+            }
+            ids.insert(transaction.id)
+            result.append(transaction)
+        }
+        return result.sorted {
+            if $0.date != $1.date {
+                return $0.date > $1.date
+            }
+            return $0.id < $1.id
+        }
+    }
+
+    private func localLedgerTransactions() -> [StarsContext.State.Transaction] {
+        guard !self.ton, self.peerId == self.account.peerId else {
+            return []
+        }
+        return self.account.miraFakeStarsLedger.entries.compactMap { entry in
+            let flags: StarsContext.State.Transaction.Flags
+            let title: String
+            switch entry.kind {
+            case .fakeGiftConversion:
+                flags = [.isLocal, .isGift]
+                title = "Gift converted to Stars"
+            case .fakeGiftTransfer:
+                flags = [.isLocal, .isGift]
+                title = "Gift transfer fee"
+            case .fakeStarsMessage:
+                flags = [.isLocal, .isPaidMessage]
+                title = "Paid message"
+            case .fakeChannelPost:
+                flags = [.isLocal]
+                title = "Channel post Stars"
+            case .fakeChannelReaction:
+                flags = [.isLocal]
+                title = "Channel Stars reactions"
+            case .initial:
+                flags = [.isLocal]
+                title = "Fake Stars balance"
+            case .credit:
+                flags = [.isLocal]
+                title = "Fake Stars credit"
+            case .debit:
+                flags = [.isLocal]
+                title = "Fake Stars debit"
+            }
+            return StarsContext.State.Transaction(
+                flags: flags,
+                id: "mira-\(entry.id)",
+                count: CurrencyAmount(amount: StarsAmount(value: entry.delta, nanos: 0), currency: .stars),
+                date: entry.date,
+                peer: .unsupported,
+                title: title,
+                description: entry.note,
+                photo: nil,
+                transactionDate: entry.date,
+                transactionUrl: nil,
+                paidMessageId: nil,
+                giveawayMessageId: nil,
+                media: [],
+                subscriptionPeriod: nil,
+                starGift: nil,
+                floodskipNumber: nil,
+                starrefCommissionPermille: nil,
+                starrefPeerId: nil,
+                starrefAmount: nil,
+                paidMessageCount: entry.kind == .fakeStarsMessage ? 1 : nil,
+                premiumGiftMonths: nil,
+                adsProceedsFromDate: nil,
+                adsProceedsToDate: nil
+            )
+        }
     }
 }
     

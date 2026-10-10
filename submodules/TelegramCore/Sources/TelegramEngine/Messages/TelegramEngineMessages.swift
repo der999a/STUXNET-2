@@ -276,12 +276,56 @@ public extension TelegramEngine {
                     return .messageId(id)
                 }
             })
-            
-            return _internal_deleteMessagesInteractively(account: self.account, messageIds: messageIds, type: type, deleteAllInGroup: deleteAllInGroup)
+
+            // Local fake rows are persisted outside Postbox as well. Keep the
+            // two projections in lockstep when the normal chat delete action
+            // is used, otherwise the message can reappear after a restart.
+            let localRecords = messageIds.compactMap { messageId -> FakeMessageRecord? in
+                guard messageId.namespace == Namespaces.Message.Local else {
+                    return nil
+                }
+                return self.account.miraMessageHistoryStore.fakeMessages(in: messageId.peerId).first(where: {
+                    $0.messageNamespace == messageId.namespace && $0.messageId == messageId.id
+                })
+            }
+            let localGiftMessageIds = Set(messageIds.filter { $0.namespace == Namespaces.Message.Local })
+            return (_internal_deleteMessagesInteractively(account: self.account, messageIds: messageIds, type: type, deleteAllInGroup: deleteAllInGroup)
+            |> map { [weak account = self.account] _ -> Void in
+                guard let account else {
+                    return
+                }
+                for record in localRecords {
+                    if record.kind == .stars {
+                        _ = account.miraFakeStarsLedger.removeFakeStarsMessage(id: record.id, peerId: record.messagePeerId)
+                    }
+                    account.miraMessageHistoryStore.removeFakeMessage(id: record.id)
+                }
+                account.miraFakeGiftsStore.remove(chatMessageIds: localGiftMessageIds)
+            })
         }
 
         public func clearHistoryInteractively(peerId: PeerId, threadId: Int64?, type: InteractiveHistoryClearingType) -> Signal<Void, NoError> {
-            return _internal_clearHistoryInteractively(postbox: self.account.postbox, peerId: peerId, threadId: threadId, type: type)
+            let account = self.account
+            return _internal_clearHistoryInteractively(postbox: account.postbox, peerId: peerId, threadId: threadId, type: type)
+            |> map { _ -> Void in
+                let records = account.miraMessageHistoryStore.fakeMessages(in: peerId)
+                for record in records {
+                    if record.kind == .stars {
+                        _ = account.miraFakeStarsLedger.removeFakeStarsMessage(id: record.id, peerId: record.messagePeerId, date: record.date)
+                    }
+                }
+                account.miraMessageHistoryStore.removeFakeMessages(ids: records.map(\.id))
+                let giftIds = Set(account.miraFakeGiftsStore.list().compactMap { entry -> MessageId? in
+                    guard let packedPeerId = entry.chatMessagePeerId,
+                          let messageId = entry.chatMessageId,
+                          let storedPeerId = MiraMessageHistoryStore.peerId(fromPackedValue: packedPeerId),
+                          storedPeerId == peerId else {
+                        return nil
+                    }
+                    return MessageId(peerId: storedPeerId, namespace: Namespaces.Message.Local, id: messageId)
+                })
+                account.miraFakeGiftsStore.remove(chatMessageIds: giftIds)
+            }
         }
 
         public func miraMessageEdits(messageId: MessageId) -> [MiraMessageEditRecord] {
@@ -406,20 +450,48 @@ public extension TelegramEngine {
                     }
                 }
                 account.miraMessageHistoryStore.addFakeMessages(records)
+                var acceptedStarsRecordIds: [String] = []
+                var ledgerFailed = false
                 for record in records {
                     guard record.kind == .stars else {
                         continue
                     }
                     let amount = max(0, record.media?.stars ?? 0)
-                    _ = account.miraFakeStarsLedger.recordFakeStarsMessage(
+                    let accepted = account.miraFakeStarsLedger.recordFakeStarsMessage(
                         id: record.id,
                         peerId: peerId.toInt64(),
                         amount: amount,
                         outgoing: record.outgoing,
                         date: record.date
                     )
+                    if accepted {
+                        acceptedStarsRecordIds.append(record.id)
+                    } else {
+                        ledgerFailed = true
+                        break
+                    }
                 }
-                if peerId.namespace == Namespaces.Peer.CloudUser,
+                if ledgerFailed {
+                    // A concurrent balance change can invalidate the initial
+                    // canDebit check. Keep Postbox, fake-message storage and
+                    // Stars ledger atomic from the user's point of view.
+                    for recordId in acceptedStarsRecordIds {
+                        _ = account.miraFakeStarsLedger.removeFakeStarsMessage(id: recordId, peerId: peerId.toInt64())
+                    }
+                    let localMessageIds = records.compactMap { record -> MessageId? in
+                        guard record.messageId != 0, let storedPeerId = MiraMessageHistoryStore.peerId(fromPackedValue: record.messagePeerId) else {
+                            return nil
+                        }
+                        return MessageId(peerId: storedPeerId, namespace: record.messageNamespace, id: record.messageId)
+                    }
+                    if !localMessageIds.isEmpty {
+                        transaction.deleteMessages(localMessageIds, forEachMedia: nil)
+                    }
+                    account.miraMessageHistoryStore.removeFakeMessages(ids: records.map(\.id))
+                    return
+                }
+                if [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(peerId.namespace),
+                   transaction.getPeer(peerId) != nil,
                    case .notIncluded = transaction.getPeerChatListInclusion(peerId) {
                     transaction.updatePeerChatListInclusion(peerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
                 }
@@ -492,7 +564,8 @@ public extension TelegramEngine {
                 // a user peer in the chat list exactly like a normal outgoing
                 // message so opening the chat remains reliable after adding
                 // fake content.
-                if peerId.namespace == Namespaces.Peer.CloudUser,
+                if [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(peerId.namespace),
+                   transaction.getPeer(peerId) != nil,
                    case .notIncluded = transaction.getPeerChatListInclusion(peerId) {
                     transaction.updatePeerChatListInclusion(peerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
                 }
@@ -543,6 +616,19 @@ public extension TelegramEngine {
                 } else {
                     displayText = text
                 }
+                // Adjust the local Stars balance before mutating Postbox or
+                // the durable fake-message record. A failed debit must leave
+                // the visible message and ledger in their previous state.
+                guard account.miraFakeStarsLedger.adjustFakeStarsMessage(
+                    id: existing.id,
+                    peerId: peerId.toInt64(),
+                    oldAmount: oldStars,
+                    newAmount: newStars,
+                    outgoing: existing.outgoing,
+                    date: date
+                ) else {
+                    return
+                }
                 let forwardInfo = currentMessage.forwardInfo.flatMap(StoreMessageForwardInfo.init)
                 transaction.updateMessage(messageId, update: { _ in
                     return .update(StoreMessage(
@@ -564,14 +650,6 @@ public extension TelegramEngine {
                     ))
                 })
                 _ = account.miraMessageHistoryStore.updateFakeMessage(updated)
-                _ = account.miraFakeStarsLedger.adjustFakeStarsMessage(
-                    id: existing.id,
-                    peerId: peerId.toInt64(),
-                    oldAmount: oldStars,
-                    newAmount: newStars,
-                    outgoing: existing.outgoing,
-                    date: date
-                )
             }
         }
 
@@ -653,7 +731,8 @@ public extension TelegramEngine {
                     }
                 }
                 account.miraMessageHistoryStore.addFakeMessages(records)
-                if peerId.namespace == Namespaces.Peer.CloudUser,
+                if [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(peerId.namespace),
+                   transaction.getPeer(peerId) != nil,
                    case .notIncluded = transaction.getPeerChatListInclusion(peerId) {
                     transaction.updatePeerChatListInclusion(peerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
                 }
@@ -663,10 +742,15 @@ public extension TelegramEngine {
         public func miraRemoveFakeMessage(id: String) -> Signal<Void, NoError> {
             let account = self.account
             return account.postbox.transaction { transaction -> Void in
-                if let record = account.miraMessageHistoryStore.fakeMessage(id: id), record.messageId != 0, record.messageNamespace == Namespaces.Message.Local, let peerId = MiraMessageHistoryStore.peerId(fromPackedValue: record.messagePeerId) {
-                    transaction.deleteMessages([MessageId(peerId: peerId, namespace: record.messageNamespace, id: record.messageId)], forEachMedia: nil)
+                if let record = account.miraMessageHistoryStore.fakeMessage(id: id) {
+                    if record.messageId != 0, record.messageNamespace == Namespaces.Message.Local, let peerId = MiraMessageHistoryStore.peerId(fromPackedValue: record.messagePeerId) {
+                        transaction.deleteMessages([MessageId(peerId: peerId, namespace: record.messageNamespace, id: record.messageId)], forEachMedia: nil)
+                    }
+                    if record.kind == .stars {
+                        _ = account.miraFakeStarsLedger.removeFakeStarsMessage(id: record.id, peerId: record.messagePeerId, date: record.date)
+                    }
+                    account.miraMessageHistoryStore.removeFakeMessage(id: id)
                 }
-                account.miraMessageHistoryStore.removeFakeMessage(id: id)
             }
         }
 
@@ -683,6 +767,9 @@ public extension TelegramEngine {
                 }
                 if !messageIds.isEmpty {
                     transaction.deleteMessages(messageIds, forEachMedia: nil)
+                }
+                for record in records where record.kind == .stars {
+                    _ = account.miraFakeStarsLedger.removeFakeStarsMessage(id: record.id, peerId: record.messagePeerId)
                 }
                 account.miraMessageHistoryStore.removeFakeMessages(ids: ids)
             }

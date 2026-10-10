@@ -1915,10 +1915,14 @@ private final class ProfileGiftsContextImpl {
         self.filter = filter
         self.limit = limit
 
-        if collectionId == nil, peerId == account.peerId {
+        // Local fake gifts are account-scoped, but ownership is stored on each
+        // entry so a transferred NFT can appear on the recipient's local
+        // profile as well. Subscribe for every peer profile; the resolver
+        // filters entries by owner and keeps real server profiles untouched.
+        if collectionId == nil {
             self.fakeGiftsDisposable.set((account.miraFakeGiftsStore.changes
             |> mapToSignal { entries -> Signal<[ProfileGiftsContext.State.StarGift], NoError> in
-                return account.miraFakeGiftsStore.resolvedProfileGifts(account: account, entries: entries)
+                return account.miraFakeGiftsStore.resolvedProfileGifts(account: account, entries: entries, ownerPeerId: peerId)
             }
             |> deliverOn(self.queue)).start(next: { [weak self] gifts in
                 guard let self else {
@@ -2708,7 +2712,7 @@ private final class ProfileGiftsContextImpl {
         var effectiveCount = useMainData ? self.count : self.filteredCount
         let effectiveDataState = useMainData ? self.dataState : self.filteredDataState
 
-        if self.collectionId == nil, self.peerId == self.account.peerId, MiraCoreGate.shared.snapshot(forAccountPeerId: self.account.peerId).fakeGiftsEnabled, !self.injectedFakeGifts.isEmpty {
+        if self.collectionId == nil, MiraCoreGate.shared.snapshot(forAccountPeerId: self.account.peerId).fakeGiftsEnabled, !self.injectedFakeGifts.isEmpty {
             let existingReferences = Set(stateGifts.compactMap { $0.reference })
             let newFakeGifts = self.injectedFakeGifts.filter { gift in
                 if let reference = gift.reference {

@@ -1281,7 +1281,7 @@ final class GiftStoreScreenComponent: Component {
             |> take(1)
             |> map { starsState, tonState -> [ContextMenuItem] in
                 let miraSettings = component.context.sharedContext.immediateMiraSettings
-                let starsBalance = miraSettings.fakeStarsEnabled ? StarsAmount(value: miraSettings.fakeStarsBalance, nanos: 0) : (starsState?.balance ?? .zero)
+                let starsBalance = miraSettings.fakeStarsEnabled ? StarsAmount(value: component.context.account.miraFakeStarsLedger.balance, nanos: 0) : (starsState?.balance ?? .zero)
                 let tonBalance = tonState?.balance.value ?? 0
                 
                 var items: [ContextMenuItem] = []

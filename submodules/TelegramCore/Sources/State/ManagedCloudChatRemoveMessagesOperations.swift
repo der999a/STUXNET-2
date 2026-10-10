@@ -143,17 +143,14 @@ private func removeMessages(postbox: Postbox, network: Network, stateManager: Ac
             var signal: Signal<Void, NoError> = .complete()
             for s in stride(from: 0, to: operation.messageIds.count, by: 100) {
                 let ids = Array(operation.messageIds[s ..< min(s + 100, operation.messageIds.count)])
+                // Scheduled messages are removed from Postbox immediately, so
+                // dropping a failed RPC here would let the next sync restore
+                // them. Keep the operation-log entry alive until Telegram has
+                // acknowledged the delete.
                 let partSignal = network.request(Api.functions.messages.deleteScheduledMessages(peer: inputPeer, id: ids.map { $0.id }))
-                    |> map { result -> Api.Updates? in
-                        return result
-                    }
-                    |> `catch` { _ in
-                        return .single(nil)
-                    }
+                    |> retryRequest
                     |> mapToSignal { updates -> Signal<Void, NoError> in
-                        if let updates = updates {
-                            stateManager.addUpdates(updates)
-                        }
+                        stateManager.addUpdates(updates)
                         return .complete()
                 }
                 

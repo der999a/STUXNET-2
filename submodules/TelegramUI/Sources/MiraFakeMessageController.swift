@@ -225,9 +225,6 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
                 arguments.state.conversationMode = value
                 if value {
                     arguments.state.oneMessagePerLine = true
-                    // Script prefixes control direction per line; keep the
-                    // content descriptor text-only for deterministic scripts.
-                    arguments.state.kind = .text
                 }
                 arguments.updated()
             })
@@ -407,12 +404,41 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId, e
                     let date = miraClampedMessageTimestamp(Int64(baseDate) - Int64(texts.count - 1 - index))
                     return (text, date, messageOutgoing)
                 }
-                let _ = (context.engine.messages.miraAddFakeConversationMessages(peerId: peerId, messages: scriptedMessages, authorPeerId: author?.id, authorName: author?.compactDisplayTitle ?? fallbackName)
-                |> deliverOnMainQueue).start(completed: {
-                    state.isSubmitting = false
-                    arguments.updated()
-                    dismissImpl?()
-                })
+                func insertScriptedMessage(at index: Int) {
+                    guard index < scriptedMessages.count else {
+                        state.isSubmitting = false
+                        arguments.updated()
+                        dismissImpl?()
+                        return
+                    }
+                    let entry = scriptedMessages[index]
+                    let signal: Signal<Void, NoError>
+                    if state.kind == .text {
+                        signal = context.engine.messages.miraAddFakeMessage(
+                            peerId: peerId,
+                            text: entry.text,
+                            outgoing: entry.outgoing,
+                            date: entry.date,
+                            authorPeerId: author?.id,
+                            authorName: author?.compactDisplayTitle ?? fallbackName
+                        )
+                    } else {
+                        signal = context.engine.messages.miraAddFakeMediaMessage(
+                            peerId: peerId,
+                            text: entry.text,
+                            kind: state.kind,
+                            media: mediaDescriptor,
+                            outgoing: entry.outgoing,
+                            date: entry.date,
+                            authorPeerId: author?.id,
+                            authorName: author?.compactDisplayTitle ?? fallbackName
+                        )
+                    }
+                    let _ = (signal |> deliverOnMainQueue).start(completed: {
+                        insertScriptedMessage(at: index + 1)
+                    })
+                }
+                insertScriptedMessage(at: 0)
                 return
             }
             func insertBatch(startIndex: Int) {
@@ -520,10 +546,25 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId, e
 
     let controller = ItemListController(context: context, state: signal)
     dismissImpl = { [weak controller] in
-        guard let controller, let navigationController = controller.navigationController as? NavigationController, navigationController.topViewController === controller else {
+        guard let controller else {
             return
         }
-        let _ = navigationController.popViewController(animated: true)
+        guard let navigationController = controller.navigationController as? NavigationController else {
+            controller.dismiss()
+            return
+        }
+        if navigationController.topViewController === controller {
+            _ = navigationController.popViewController(animated: true)
+        } else if let index = navigationController.viewControllers.firstIndex(where: { $0 === controller }), navigationController.viewControllers.count > 1 {
+            // Saving is asynchronous. If a media picker or another local
+            // editor was pushed while it completed, remove this editor from
+            // the stack instead of silently leaving it behind.
+            var viewControllers = navigationController.viewControllers
+            viewControllers.remove(at: index)
+            navigationController.setViewControllers(viewControllers, animated: false)
+        } else {
+            controller.dismiss()
+        }
     }
     return controller
 }

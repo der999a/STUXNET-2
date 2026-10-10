@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import AVFoundation
 import Postbox
 import SwiftSignalKit
 import Display
@@ -7073,6 +7074,26 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         guard let navigationController = self.effectiveNavigationController else {
             return
         }
+
+        // A preview controller normally lives only inside the context overlay,
+        // but a fast tap followed by an external navigation action can leave
+        // it in the navigation stack already.  Pushing the same instance a
+        // second time makes the back button appear to do nothing and leaves a
+        // stale controller between the chat and the list.
+        if navigationController.viewControllers.contains(where: { $0 === self }) {
+            let finishDismiss = self.dismissPreviewing?(false)
+            finishDismiss?()
+            if navigationController.topViewController !== self {
+                _ = navigationController.popToViewController(self, animated: true)
+            }
+            self.mode = .standard(.default)
+            self.canReadHistory.set(true)
+            self.updateChatPresentationInterfaceState(animated: false, interactive: false) { state in
+                return state.updatedMode(self.mode)
+            }
+            return
+        }
+
         self.mode = .standard(.default)
         self.updateRightNavigationButtons(presentationInterfaceState: self.presentationInterfaceState.updatedMode(self.mode), transition: .immediate)
         let completion = self.dismissPreviewing?(true)
@@ -7084,7 +7105,9 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         
         let updatedLayout = self.validLayout
         
+        var didScheduleDismissal = false
         if let initialLayout, let updatedLayout, transition.isAnimated {
+            didScheduleDismissal = true
             let initialView = self.view.superview
             let updatedFrame = self.view.convert(self.view.bounds, to: navigationController.view)
             navigationController.view.addSubview(self.view)
@@ -7108,6 +7131,14 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 completion?()
             })
             transition.updateCornerRadius(layer: self.view.layer, cornerRadius: 0.0)
+        }
+
+        // There is no layout animation when the controller is not visible yet
+        // (or when callers explicitly request an immediate transition).  The
+        // context overlay still has to be dismissed in that path; otherwise
+        // the newly pushed chat is covered and cannot be exited.
+        if !didScheduleDismissal {
+            completion?()
         }
         
         if let navigationBar = self.navigationBar {
@@ -8976,6 +9007,114 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
     func shouldDivertMessagesToScheduled(targetPeer: EnginePeer? = nil, messages: [EnqueueMessage]) -> Signal<Bool, NoError> {
         return .single(false)
     }
+
+    /// Enqueues a resolved social-video file through the normal Telegram media
+    /// pipeline. This keeps upload progress, retry and cancellation behaviour
+    /// identical to a video selected from the media picker.
+    private func enqueueDownloadedSocialVideo(_ url: URL, sourceURL: URL) {
+        guard FileManager.default.fileExists(atPath: url.path), self.chatLocation.peerId != nil else {
+            return
+        }
+
+        let asset = AVURLAsset(url: url)
+        let track = asset.tracks(withMediaType: .video).first
+        let naturalSize = track?.naturalSize ?? CGSize(width: 640.0, height: 360.0)
+        let transformedSize = naturalSize.applying(track?.preferredTransform ?? .identity)
+        let width = max(1.0, abs(transformedSize.width))
+        let height = max(1.0, abs(transformedSize.height))
+        let duration = max(0.0, CMTimeGetSeconds(asset.duration).isFinite ? CMTimeGetSeconds(asset.duration) : 0.0)
+        let dimensions = PixelDimensions(CGSize(width: width, height: height))
+        let resource = LocalFileVideoMediaResource(randomId: Int64.random(in: Int64.min ... Int64.max), path: url.path, adjustments: nil)
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
+        let attributes: [TelegramMediaFileAttribute] = [
+            .Video(duration: duration, size: dimensions, flags: .supportsStreaming, preloadSize: nil, coverTime: nil, videoCodec: nil),
+            .FileName(fileName: "stuxnet-video.mp4")
+        ]
+        let media = TelegramMediaFile(
+            fileId: EngineMedia.Id(namespace: Namespaces.Media.LocalFile, id: Int64.random(in: Int64.min ... Int64.max)),
+            partialReference: nil,
+            resource: resource,
+            previewRepresentations: [],
+            videoThumbnails: [],
+            immediateThumbnailData: nil,
+            mimeType: "video/mp4",
+            size: fileSize,
+            attributes: attributes,
+            alternativeRepresentations: []
+        )
+        self.sendMessages([
+            .message(
+                text: sourceURL.absoluteString,
+                attributes: [],
+                inlineStickers: [:],
+                mediaReference: .standalone(media: media),
+                threadId: self.chatLocation.threadId,
+                replyToMessageId: nil,
+                replyToStoryId: nil,
+                localGroupingKey: nil,
+                correlationId: nil,
+                bubbleUpEmojiOrStickersets: []
+            )
+        ])
+    }
+
+    private func enqueueSocialVideoLinks(_ links: [MiraSocialVideoLink], settings: MiraSocialVideoSettings) {
+        guard !links.isEmpty else {
+            return
+        }
+        self.enqueueSocialVideoLink(links[0], settings: settings, completion: { [weak self] succeeded in
+            guard succeeded else {
+                return
+            }
+            guard let self, links.count > 1 else {
+                return
+            }
+            self.enqueueSocialVideoLinks(Array(links.dropFirst()), settings: settings)
+        })
+    }
+
+    private func enqueueSocialVideoLink(_ link: MiraSocialVideoLink, settings: MiraSocialVideoSettings, completion: @escaping (Bool) -> Void = { _ in }) {
+        var downloadHandle: MiraSocialVideoDownloadHandle?
+        var wasCancelled = false
+        let alert = UIAlertController(title: "Sending video", message: "Preparing video...", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: self.presentationData.strings.Common_Cancel, style: .cancel, handler: { _ in
+            wasCancelled = true
+            downloadHandle?.cancel()
+        }))
+        self.present(alert, animated: true, completion: nil)
+
+        downloadHandle = MiraSocialVideoDownloader.enqueue(link: link, settings: settings, progress: { [weak alert] value in
+            guard let alert, !wasCancelled else {
+                return
+            }
+            let percent = Int((min(1.0, max(0.0, value)) * 100.0).rounded())
+            // UIAlertController exposes its message as read-only in UIKit;
+            // KVC updates the already-presented alert without replacing it,
+            // keeping the cancel action and download handle intact.
+            alert.setValue("Downloading video... \(percent)%", forKey: "message")
+        }) { [weak self, weak alert] url in
+            alert?.dismiss(animated: true, completion: nil)
+            guard let self, let url else {
+                guard !wasCancelled, let self else {
+                    return
+                }
+                let errorAlert = UIAlertController(title: "Video download failed", message: "Check the connection and try again.", preferredStyle: .alert)
+                errorAlert.addAction(UIAlertAction(title: self.presentationData.strings.Common_Cancel, style: .cancel, handler: nil))
+                errorAlert.addAction(UIAlertAction(title: "Retry", style: .default, handler: { [weak self] _ in
+                    self?.enqueueSocialVideoLink(link, settings: settings)
+                }))
+                self.present(errorAlert, animated: true, completion: nil)
+                completion(false)
+                return
+            }
+            self.enqueueDownloadedSocialVideo(url, sourceURL: link.url)
+            // Keep the cache file briefly so Telegram can retry a failed upload.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60.0 * 60.0) {
+                try? FileManager.default.removeItem(at: url)
+            }
+            completion(true)
+        }
+    }
     
     func sendMessages(_ messages: [EnqueueMessage], media: Bool = false, postpone: Bool = false, commit: Bool = false) {
         if case let .customChatContents(customChatContents) = self.subject {
@@ -9013,9 +9152,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 isScheduledMessages = true
             }
 
-            // Social-video auto-download is an opt-in local side effect. It
-            // only recognizes supported hosts and never alters the outgoing
-            // Telegram message or uploads the downloaded file.
+            // Social-video links are resolved locally and then sent through
+            // the same media queue as a picker-selected video. The original
+            // text message remains intact, so a failed resolver never loses
+            // the user's link.
             if !isScheduledMessages {
                 let socialVideoSettings = self.context.sharedContext.immediateMiraSettings.socialVideoSettings
                 if socialVideoSettings.enabled {
@@ -9032,17 +9172,17 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                                 context: self.context,
                                 updatedPresentationData: self.updatedPresentationData,
                                 title: "Download social video?",
-                                text: "A local copy will be saved from \(platformNames). The Telegram message will still be sent normally.",
+                                text: "The video from \(platformNames) will be sent to this chat after it loads.",
                                 actions: [
                                     TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {}),
                                     TextAlertAction(type: .defaultAction, title: "Download", action: {
-                                        MiraSocialVideoDownloader.enqueue(links: socialVideoLinks, settings: socialVideoSettings)
+                                        self.enqueueSocialVideoLinks(socialVideoLinks, settings: socialVideoSettings)
                                     })
                                 ]
                             )
                             self.present(alert, in: .window(.root))
                         } else {
-                            MiraSocialVideoDownloader.enqueue(links: socialVideoLinks, settings: socialVideoSettings)
+                            self.enqueueSocialVideoLinks(socialVideoLinks, settings: socialVideoSettings)
                         }
                     }
                 }

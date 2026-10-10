@@ -434,8 +434,8 @@ final class StarsTransactionsListPanelComponent: Component {
                             itemSubtitle = nil
                         }
                     case .unsupported:
-                        itemTitle = environment.strings.Stars_Intro_Transaction_Unsupported_Title
-                        itemSubtitle = nil
+                        itemTitle = item.title ?? environment.strings.Stars_Intro_Transaction_Unsupported_Title
+                        itemSubtitle = item.description ?? (item.flags.contains(.isLocal) ? "Local transaction" : nil)
                     }
                     
                     let itemLabel: NSAttributedString

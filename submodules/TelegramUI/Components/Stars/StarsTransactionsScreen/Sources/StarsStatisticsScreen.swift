@@ -164,6 +164,11 @@ final class StarsStatisticsScreenComponent: Component {
         
         private var stateDisposable: Disposable?
         private var starsState: StarsRevenueStats?
+        /// Account-local fake Stars are rendered alongside the server revenue
+        /// state. Keep this separate from `starsState`: the latter contains
+        /// server-only graph and withdrawal metadata that must never be
+        /// fabricated from a local balance.
+        private var fakeStarsBalance: Int64?
         
         private var previousBalance: Int64?
                 
@@ -378,12 +383,22 @@ final class StarsStatisticsScreenComponent: Component {
             let strings = environment.strings
             
             if self.stateDisposable == nil {
-                self.stateDisposable = (component.revenueContext.state
-                |> deliverOnMainQueue).start(next: { [weak self] state in
+                self.stateDisposable = (combineLatest(
+                    queue: Queue.mainQueue(),
+                    component.revenueContext.state,
+                    component.context.account.miraFakeStarsLedger.changes,
+                    miraSettingsSignal(accountManager: component.context.sharedContext.accountManager)
+                )
+                |> deliverOnMainQueue).start(next: { [weak self] state, fakeStarsLedger, miraSettings in
                     guard let self else {
                         return
                     }
                     self.starsState = state.stats
+                    if component.peerId == component.context.account.peerId && miraSettings.fakeStarsEnabled {
+                        self.fakeStarsBalance = fakeStarsLedger.balance
+                    } else {
+                        self.fakeStarsBalance = nil
+                    }
                     
                     if !self.isUpdating {
                         self.state?.updated()
@@ -463,6 +478,11 @@ final class StarsStatisticsScreenComponent: Component {
                 contentHeight += 44.0
             }
             
+            let effectiveFakeBalance = self.fakeStarsBalance.map { StarsAmount(value: $0, nanos: 0) }
+            let availableBalance = effectiveFakeBalance.map { CurrencyAmount(amount: $0, currency: .stars) } ?? starsState?.balances.availableBalance ?? CurrencyAmount(amount: .zero, currency: .stars)
+            let currentBalance = effectiveFakeBalance.map { CurrencyAmount(amount: $0, currency: .stars) } ?? starsState?.balances.currentBalance ?? CurrencyAmount(amount: .zero, currency: .stars)
+            let overallRevenue = effectiveFakeBalance.map { CurrencyAmount(amount: $0, currency: .stars) } ?? starsState?.balances.overallRevenue ?? CurrencyAmount(amount: .zero, currency: .stars)
+
             let proceedsSize = self.proceedsView.update(
                 transition: .immediate,
                 component: AnyComponent(ListSectionComponent(
@@ -489,21 +509,21 @@ final class StarsStatisticsScreenComponent: Component {
                             theme: environment.theme,
                             dateTimeFormat: environment.dateTimeFormat,
                             title: strings.Stars_BotRevenue_Proceeds_Available,
-                            value: starsState?.balances.availableBalance ?? CurrencyAmount(amount: .zero, currency: .stars),
+                            value: availableBalance,
                             rate: starsState?.usdRate ?? 0.0
                         ))),
                         AnyComponentWithIdentity(id: 1, component: AnyComponent(StarsOverviewItemComponent(
                             theme: environment.theme,
                             dateTimeFormat: environment.dateTimeFormat,
                             title: strings.Stars_BotRevenue_Proceeds_Current,
-                            value: starsState?.balances.currentBalance ?? CurrencyAmount(amount: .zero, currency: .stars),
+                            value: currentBalance,
                             rate: starsState?.usdRate ?? 0.0
                         ))),
                         AnyComponentWithIdentity(id: 2, component: AnyComponent(StarsOverviewItemComponent(
                             theme: environment.theme,
                             dateTimeFormat: environment.dateTimeFormat,
                             title: strings.Stars_BotRevenue_Proceeds_Total,
-                            value: starsState?.balances.overallRevenue ?? CurrencyAmount(amount: .zero, currency: .stars),
+                            value: overallRevenue,
                             rate: starsState?.usdRate ?? 0.0
                         )))
                     ],

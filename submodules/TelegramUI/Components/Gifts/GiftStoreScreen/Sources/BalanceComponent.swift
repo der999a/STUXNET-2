@@ -79,13 +79,14 @@ final class BalanceComponent: Component {
                 if let starsContext = component.context.starsContext, let tonContext = component.context.tonContext {
                     self.balanceDisposable = combineLatest(queue: Queue.mainQueue(),
                         starsContext.state,
-                        tonContext.state
-                    ).start(next: { [weak self] starsState, tonState in
+                        tonContext.state,
+                        component.context.account.miraFakeStarsLedger.changes,
+                        miraSettingsSignal(accountManager: component.context.sharedContext.accountManager)
+                    ).start(next: { [weak self] starsState, tonState, fakeStarsLedger, miraSettings in
                         guard let self else {
                             return
                         }
-                        let miraSettings = component.context.sharedContext.immediateMiraSettings
-                        self.starsBalance = miraSettings.fakeStarsEnabled ? miraSettings.fakeStarsBalance : (starsState?.balance.value ?? 0)
+                        self.starsBalance = miraSettings.fakeStarsEnabled ? fakeStarsLedger.balance : (starsState?.balance.value ?? 0)
                         self.tonBalance = tonState?.balance.value ?? 0
                         if !self.isUpdating {
                             self.componentState?.updated()

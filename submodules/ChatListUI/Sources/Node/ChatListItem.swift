@@ -31,6 +31,17 @@ import MultilineTextWithEntitiesComponent
 import ShimmerEffect
 import GlassBackgroundComponent
 
+/// Applies account-local profile names to chat-list titles while retaining the
+/// server title when no local projection exists. The override store is keyed
+/// by the stable peer id and never mutates the EnginePeer/Postbox object.
+private func miraChatListDisplayTitle(context: AccountContext, peer: EnginePeer, strings: PresentationStrings, displayOrder: PresentationPersonNameOrder) -> String {
+    let fallback = peer.displayTitle(strings: strings, displayOrder: displayOrder)
+    return context.account.miraLocalProfileOverridesStore.effectiveDisplayName(
+        forKey: String(peer.id.toInt64()),
+        fallback: fallback
+    ) ?? fallback
+}
+
 public enum ChatListItemContent {
     public final class ThreadInfo: Equatable {
         public let id: Int64
@@ -3296,7 +3307,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         if customMessageListData.commandPrefix != nil {
                             titleAttributedString = nil
                         } else {
-                            if let displayTitle = itemPeer.chatOrMonoforumMainPeer?.displayTitle(strings: item.presentationData.strings, displayOrder: item.presentationData.nameDisplayOrder) {
+                            if let mainPeer = itemPeer.chatOrMonoforumMainPeer {
+                                let displayTitle = miraChatListDisplayTitle(context: item.context, peer: mainPeer, strings: item.presentationData.strings, displayOrder: item.presentationData.nameDisplayOrder)
                                 let textColor: UIColor
                                 if case let .chatList(index) = item.index, index.messageIndex.id.peerId.namespace == Namespaces.Peer.SecretChat {
                                     textColor = theme.secretTitleColor
@@ -3326,7 +3338,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                          titleAttributedString = NSAttributedString(string: item.presentationData.strings.DialogList_Replies, font: titleFont, textColor: theme.titleColor)
                     } else if let id = itemPeer.chatMainPeer?.id, id.isAnonymousSavedMessages {
                         titleAttributedString = NSAttributedString(string: item.presentationData.strings.ChatList_AuthorHidden, font: titleFont, textColor: theme.titleColor)
-                    } else if let displayTitle = itemPeer.chatOrMonoforumMainPeer?.displayTitle(strings: item.presentationData.strings, displayOrder: item.presentationData.nameDisplayOrder) {
+                    } else if let mainPeer = itemPeer.chatOrMonoforumMainPeer {
+                        let displayTitle = miraChatListDisplayTitle(context: item.context, peer: mainPeer, strings: item.presentationData.strings, displayOrder: item.presentationData.nameDisplayOrder)
                         let textColor: UIColor
                         if case let .chatList(index) = item.index, index.messageIndex.id.peerId.namespace == Namespaces.Peer.SecretChat {
                             textColor = theme.secretTitleColor

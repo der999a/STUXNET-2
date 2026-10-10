@@ -422,6 +422,12 @@ extension ChatControllerImpl {
                             guard let navigationController = self.effectiveNavigationController else {
                                 return
                             }
+                            // A preview chat can navigate directly to its linked
+                            // channel. Dismiss the context overlay before pushing
+                            // the destination or it remains above the new chat
+                            // and Back appears to do nothing.
+                            let finishDismiss = self.dismissPreviewing?(false)
+                            finishDismiss?()
                             self.context.sharedContext.navigateToChatController(NavigateToChatControllerParams(
                                 navigationController: navigationController,
                                 context: self.context,
@@ -435,8 +441,18 @@ extension ChatControllerImpl {
                         }
                         
                         if peer.restrictionText(platform: "ios", contentSettings: self.context.currentContentSettings.with { $0 }) == nil && !self.presentationInterfaceState.isNotAccessible {
+                            var didDismissPreview = false
+                            let dismissPreview: () -> Void = { [weak self] in
+                                guard !didDismissPreview else {
+                                    return
+                                }
+                                didDismissPreview = true
+                                let finishDismiss = self?.dismissPreviewing?(false)
+                                finishDismiss?()
+                            }
                             if peer.id == self.context.account.peerId {
                                 if let peer = self.presentationInterfaceState.renderedPeer?.chatMainPeer, let infoController = self.context.sharedContext.makePeerInfoController(context: self.context, updatedPresentationData: self.updatedPresentationData, peer: EnginePeer(peer), mode: .generic, avatarInitiallyExpanded: false, fromChat: true, requestsContext: nil) {
+                                    dismissPreview()
                                     self.effectiveNavigationController?.pushViewController(infoController)
                                 }
                             } else {
@@ -457,16 +473,24 @@ extension ChatControllerImpl {
                                     mode = .generic
                                 }
                                 if let infoController = self.context.sharedContext.makePeerInfoController(context: self.context, updatedPresentationData: self.updatedPresentationData, peer: EnginePeer(peer), mode: mode, avatarInitiallyExpanded: expandAvatar, fromChat: true, requestsContext: self.contentData?.inviteRequestsContext) {
+                                    // Close the preview overlay before pushing
+                                    // the profile.  Pushing first leaves the
+                                    // overlay as the visible top controller
+                                    // and makes Back appear to be ignored.
+                                    dismissPreview()
                                     self.effectiveNavigationController?.pushViewController(infoController)
                                 }
                             }
-
-                            let _ = self.dismissPreviewing?(false)
+                            // A missing profile controller must not leave the
+                            // preview overlay on top of the navigation stack.
+                            dismissPreview()
                         }
                     }))
                 case .replyThread:
                     if let peer = self.presentationInterfaceState.renderedPeer?.peer, case let .replyThread(replyThreadMessage) = self.chatLocation, replyThreadMessage.peerId == self.context.account.peerId {
                         if let infoController = self.context.sharedContext.makePeerInfoController(context: self.context, updatedPresentationData: self.updatedPresentationData, peer: EnginePeer(peer), mode: .forumTopic(thread: replyThreadMessage), avatarInitiallyExpanded: false, fromChat: true, requestsContext: nil) {
+                            let finishDismiss = self.dismissPreviewing?(false)
+                            finishDismiss?()
                             self.effectiveNavigationController?.pushViewController(infoController)
                         }
                     } else if let monoforumPeer = self.presentationInterfaceState.renderedPeer?.peer, case let .replyThread(replyThreadMessage) = self.chatLocation, monoforumPeer.isMonoForum {
@@ -482,12 +506,16 @@ extension ChatControllerImpl {
                                     return
                                 }
                                 if let infoController = self.context.sharedContext.makePeerInfoController(context: self.context, updatedPresentationData: self.updatedPresentationData, peer: peer, mode: .monoforum(monoforumPeer.id), avatarInitiallyExpanded: false, fromChat: true, requestsContext: nil) {
+                                    let finishDismiss = self.dismissPreviewing?(false)
+                                    finishDismiss?()
                                     self.effectiveNavigationController?.pushViewController(infoController)
                                 }
                             }
                         }
                     } else if let channel = self.presentationInterfaceState.renderedPeer?.peer as? TelegramChannel, channel.isForumOrMonoForum, case let .replyThread(message) = self.chatLocation {
                         if let infoController = self.context.sharedContext.makePeerInfoController(context: self.context, updatedPresentationData: self.updatedPresentationData, peer: EnginePeer(channel), mode: .forumTopic(thread: message), avatarInitiallyExpanded: false, fromChat: true, requestsContext: self.contentData?.inviteRequestsContext) {
+                            let finishDismiss = self.dismissPreviewing?(false)
+                            finishDismiss?()
                             self.effectiveNavigationController?.pushViewController(infoController)
                         }
                     }

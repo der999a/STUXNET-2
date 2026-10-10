@@ -690,7 +690,7 @@ public class ChatMessageGiftBubbleContentNode: ChatMessageBubbleContentNode {
                                     }
                                 }
                             }
-                        case let .starGiftUnique(gift, isUpgrade, _, _, _, _, isRefunded, _, _, _, _, _, _, _, _, _, fromOffer, _, isCrafted):
+                        case let .starGiftUnique(gift, isUpgrade, isTransferred, _, _, _, isRefunded, _, _, _, _, _, _, _, _, _, fromOffer, _, isCrafted):
                             if case let .unique(uniqueGift) = gift {
                                 isStarGift = true
                                 
@@ -709,7 +709,15 @@ public class ChatMessageGiftBubbleContentNode: ChatMessageBubbleContentNode {
                                 } else {
                                     authorName = item.message.author.flatMap { EnginePeer($0) }?.compactDisplayTitle ?? ""
                                 }
-                                if isStoryEntity {
+                                if isTransferred {
+                                    // Local NFT transfers carry no server
+                                    // `originalInfo` signature. Keep the
+                                    // transfer state attached to this exact
+                                    // gift bubble instead of falling back to
+                                    // the generic "gifted by" copy.
+                                    title = isSelfGift ? item.presentationData.strings.Notification_StarGift_Purchased_Title : item.presentationData.strings.Notification_StarsGift_TransferYou
+                                    text = isSelfGift ? "" : item.presentationData.strings.Notification_StarsGift_TransferYou
+                                } else if isStoryEntity {
                                     title = uniqueGift.title
                                 } else if isSelfGift {
                                     if isCrafted {

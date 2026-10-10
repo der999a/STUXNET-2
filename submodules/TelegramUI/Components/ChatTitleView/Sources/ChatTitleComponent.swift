@@ -14,6 +14,26 @@ import TelegramStringFormatting
 import EmojiStatusComponent
 import GlassBackgroundComponent
 
+private func miraProjectedChatTitlePeer(context: AccountContext, peer: Peer) -> Peer {
+    guard let user = peer as? TelegramUser else {
+        return peer
+    }
+    guard let value = context.account.miraLocalProfileOverridesStore.override(forKey: String(user.id.toInt64())) else {
+        return peer
+    }
+    var projected = user
+    if value.username != nil || value.tag != nil {
+        projected = projected.withUpdatedUsername(value.username ?? value.tag)
+    }
+    if value.firstName != nil || value.lastName != nil {
+        projected = projected.withUpdatedNames(firstName: value.firstName ?? user.firstName, lastName: value.lastName ?? user.lastName)
+    }
+    if value.phoneNumber != nil {
+        projected = projected.withUpdatedPhone(value.phoneNumber)
+    }
+    return projected
+}
+
 public final class ChatNavigationBarTitleView: UIView, NavigationBarTitleView {
     private final class ContentData: Equatable {
         let context: AccountContext
@@ -399,7 +419,7 @@ public final class ChatTitleComponent: Component {
                     }
                     isEnabled = false
                 } else {
-                    if let peer = peerView.peer {
+                    if let peer = peerView.peer.map({ miraProjectedChatTitlePeer(context: component.context, peer: $0) }) {
                         if let customTitle {
                             titleSegments = [AnimatedTextComponent.Item(
                                 id: AnyHashable(0),

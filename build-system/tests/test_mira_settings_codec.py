@@ -51,6 +51,8 @@ public enum EnginePeer { public typealias Id = PeerId }
         extract(settings, "public struct MiraSocialVideoSettings"),
         extract(settings, "public struct MiraSocialVideoLink"),
         extract(settings, "public enum MiraSocialVideoLinkParser"),
+        extract(settings, "public enum MiraLocalPeerRole"),
+        extract(settings, "public struct MiraLocalPeerOverride"),
         extract(settings, "public struct MiraSettings"),
     ])
     parts = [re.sub(r"^import [^\n]+$", "", part, flags=re.MULTILINE) for part in parts]
@@ -68,6 +70,11 @@ roundTrip(.defaultSettings)
 var configured = MiraSettings.defaultSettings
 var ghost = MiraGhostSettings.defaultSettings
 ghost.setGhostModeEnabled(true)
+var lockedGhost = MiraGhostSettings.defaultSettings
+lockedGhost.sendReadMessagesLocked = true
+check(!lockedGhost.isGhostActive, "locked allowed packet does not activate Ghost Mode")
+lockedGhost.sendReadMessages = false
+check(lockedGhost.isGhostActive, "blocked packet activates Ghost Mode")
 configured.ghost = ["0": ghost, "12345": .defaultSettings]
 configured.ghostByAccount = ["account:456": ghost, "account:789": .defaultSettings]
 roundTrip(configured)
@@ -96,6 +103,17 @@ configured.socialVideoSettings.confirmBeforeDownload = false
 configured.socialVideoSettings.destination = .photos
 configured.deletedMark = "🧹 удалено"
 configured.editedMark = "изменено"
+configured.localPeerOverrides = [
+    "123": MiraLocalPeerOverride(username: "@alice", tag: "@editor", phone: "+100", firstName: "Alice", lastName: "Editor", role: .administrator)
+]
+roundTrip(configured)
+check(MiraSettings.defaultSettings.showRealLastSeen == false, "self Last Seen defaults to Just Now")
+check(configured.localPeerOverride(forPeerId: 123)?.username == "alice", "local peer override username")
+check(configured.localPeerOverride(forPeerId: 123)?.tag == "editor", "local peer override tag")
+check(configured.localPeerOverride(forPeerId: 123)?.displayName == "Alice Editor", "local peer override display name")
+check(configured.localPeerOverride(forPeerId: 123)?.role == .administrator, "local peer override role")
+configured.setLocalPeerOverride(MiraLocalPeerOverride(), forPeerId: 123)
+check(configured.localPeerOverride(forPeerId: 123) == nil, "empty local peer override removed")
 roundTrip(configured)
 check(MiraSocialVideoLinkParser.parse("https://youtube.com/shorts/abc")?.platform == .youtube, "YouTube Shorts parser")
 check(MiraSocialVideoLinkParser.parse("https://www.instagram.com/share/reel/abc")?.platform == .instagram, "Instagram share parser")

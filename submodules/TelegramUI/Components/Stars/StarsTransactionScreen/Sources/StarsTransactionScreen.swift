@@ -551,7 +551,7 @@ private final class StarsTransactionSheetContent: CombinedComponent {
                     case .apiLimitExtension:
                         titleText = strings.Stars_Transaction_TelegramBotApi_Title
                     case .unsupported:
-                        titleText = strings.Stars_Transaction_Unsupported_Title
+                        titleText = transaction.title ?? strings.Stars_Transaction_Unsupported_Title
                     }
                     
                     if let floodskipNumber = transaction.floodskipNumber {

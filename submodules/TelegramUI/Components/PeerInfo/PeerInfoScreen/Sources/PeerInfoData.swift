@@ -17,6 +17,27 @@ import PhotoResources
 import PeerInfoPaneNode
 import WebUI
 
+private func miraProjectedPeer(context: AccountContext, peer: Peer?) -> Peer? {
+    guard let user = peer as? TelegramUser else {
+        return peer
+    }
+    let key = String(user.id.toInt64())
+    guard let value = context.account.miraLocalProfileOverridesStore.override(forKey: key) else {
+        return peer
+    }
+    var projected = user
+    if value.username != nil || value.tag != nil {
+        projected = projected.withUpdatedUsername(value.username ?? value.tag)
+    }
+    if value.firstName != nil || value.lastName != nil {
+        projected = projected.withUpdatedNames(firstName: value.firstName ?? user.firstName, lastName: value.lastName ?? user.lastName)
+    }
+    if value.phoneNumber != nil {
+        projected = projected.withUpdatedPhone(value.phoneNumber)
+    }
+    return projected
+}
+
 enum PeerInfoUpdatingAvatar {
     case none
     case image(TelegramMediaImageRepresentation)
@@ -1207,17 +1228,22 @@ func peerInfoScreenData(
             enum StatusInputData: Equatable {
                 case none
                 case presence(TelegramUserPresence)
+                case selfLastSeenJustNow
                 case bot(subscriberCount: Int32?)
                 case support
             }
             let status = Signal<PeerInfoStatusData?, NoError> { subscriber in
                 class Manager {
                     var currentValue: TelegramUserPresence? = nil
+                    var showSelfLastSeenJustNow = false
                     var updateManager: QueueLocalObject<PeerPresenceStatusManager>? = nil
                 }
                 let manager = Atomic<Manager>(value: Manager())
                 let notify: () -> Void = {
                     let data = manager.with { manager -> PeerInfoStatusData? in
+                        if manager.showSelfLastSeenJustNow {
+                            return PeerInfoStatusData(text: strings.LastSeen_JustNow, isActivity: false, isHiddenStatus: false, key: nil)
+                        }
                         if let presence = manager.currentValue {
                             let timestamp = CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970
                             let (text, isActivity) = stringAndActivityForUserPresence(strings: strings, dateTimeFormat: dateTimeFormat, presence: EnginePeer.Presence(presence), relativeTo: Int32(timestamp), expanded: true)
@@ -1241,28 +1267,13 @@ func peerInfoScreenData(
                         return .none
                     }
                     if user.id == context.account.peerId {
-                        let miraSettings = context.sharedContext.immediateMiraSettings
-                        guard let presence = view.peerPresences[userPeerId] as? TelegramUserPresence else {
-                            return .none
-                        }
-                        if miraSettings.showRealLastSeen {
-                            // The self account is cached with status `.none` while
-                            // offline, but its lastActivity is still the real
-                            // timestamp. Feed the normal Telegram formatter an
-                            // expired presence so it renders the exact last-seen
-                            // time instead of the misleading "long time ago".
-                            if case .none = presence.status, presence.lastActivity > 0 {
-                                return .presence(TelegramUserPresence(status: .present(until: max(0, presence.lastActivity - 1)), lastActivity: presence.lastActivity))
-                            }
+                        // Keep the AyuGram-style local default ("last seen just now").
+                        // Real presence is opt-in and remains a presentation-only setting.
+                        if context.sharedContext.immediateMiraSettings.showRealLastSeen, let presence = view.peerPresences[userPeerId] as? TelegramUserPresence {
                             return .presence(presence)
+                        } else {
+                            return .selfLastSeenJustNow
                         }
-                        if case let .present(until) = presence.status {
-                            let timestamp = Int32(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970)
-                            if until < timestamp {
-                                return .presence(TelegramUserPresence(status: .recently(isHidden: true), lastActivity: presence.lastActivity))
-                            }
-                        }
-                        return .presence(presence)
                     }
                     if user.isDeleted {
                         return .none
@@ -1288,12 +1299,20 @@ func peerInfoScreenData(
                         }
                     case .support:
                         subscriber.putNext(PeerInfoStatusData(text: strings.Bot_GenericSupportStatus, isActivity: false, key: nil))
+                    case .selfLastSeenJustNow:
+                        let _ = manager.with { manager -> Void in
+                            manager.currentValue = nil
+                            manager.showSelfLastSeenJustNow = true
+                            manager.updateManager = nil
+                        }
+                        notify()
                     default:
                         var presence: TelegramUserPresence?
                         if case let .presence(value) = inputData {
                             presence = value
                         }
                         let _ = manager.with { manager -> Void in
+                            manager.showSelfLastSeenJustNow = false
                             manager.currentValue = presence
                             if let presence = presence {
                                 let updateManager: QueueLocalObject<PeerPresenceStatusManager>
@@ -1588,7 +1607,19 @@ func peerInfoScreenData(
                     }
                     
                     if availablePanes != nil, profileGiftsContext != nil, let cachedData = peerView.cachedData as? CachedUserData, peerView.peerId != context.account.peerId {
-                        if let starGiftsCount = cachedData.starGiftsCount, starGiftsCount > 0 {
+                        let hasLocalGifts: Bool = {
+                            guard context.sharedContext.immediateMiraSettings.fakeGiftsEnabled else {
+                                return false
+                            }
+                            return context.account.miraFakeGiftsStore.list().contains { entry in
+                                guard let storedOwnerPeerId = entry.ownerPeerId,
+                                      let ownerPeerId = MiraFakeGift.peerId(fromStoredValue: storedOwnerPeerId, isPacked: true) else {
+                                    return false
+                                }
+                                return ownerPeerId == peerView.peerId
+                            }
+                        }()
+                        if (cachedData.starGiftsCount ?? 0) > 0 || hasLocalGifts {
                             availablePanes?.insert(.gifts, at: hasStories ? 1 : 0)
                         }
                     }
@@ -1638,7 +1669,8 @@ func peerInfoScreenData(
                     }
                 }
                 
-                let peer = peerView.peers[userPeerId]
+                let peer = miraProjectedPeer(context: context, peer: peerView.peers[userPeerId])
+                let chatPeer = miraProjectedPeer(context: context, peer: peerView.peers[peerId])
                 
                 var managedByBot: EnginePeer?
                 if let cachedData = peerView.cachedData as? CachedUserData, let botManagerId = cachedData.botManagerId {
@@ -1708,7 +1740,7 @@ func peerInfoScreenData(
                     
                     return PeerInfoScreenData(
                         peer: peer.flatMap(EnginePeer.init),
-                        chatPeer: peerView.peers[peerId].flatMap(EnginePeer.init),
+                        chatPeer: chatPeer.flatMap(EnginePeer.init),
                         savedMessagesPeer: savedMessagesPeer,
                         cachedData: peerView.cachedData,
                         status: status,

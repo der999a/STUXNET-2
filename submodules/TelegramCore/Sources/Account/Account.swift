@@ -1161,6 +1161,10 @@ public class Account {
     public let peerId: PeerId
     public let miraMessageHistoryStore: MiraMessageHistoryStore
     public let miraFakeGiftsStore: MiraFakeGiftsStore
+    /// Account-local channels and profile projections used by the fake UI.
+    /// These stores never create Telegram peers or API requests.
+    public let miraFakeChannelsStore: MiraFakeChannelsStore
+    public let miraLocalProfileOverridesStore: MiraLocalProfileOverridesStore
     /// Account-local Stars balance used only by Stuxnet fake gifts/messages.
     /// It is intentionally separate from Telegram's server-backed Stars.
     public let miraFakeStarsLedger: MiraFakeStarsLedger
@@ -1256,6 +1260,9 @@ public class Account {
         MiraMessageHistoryStore.register(accountPeerId: peerId, store: self.miraMessageHistoryStore)
         self.miraFakeGiftsStore = MiraFakeGiftsStore(basePath: basePath)
         MiraFakeGiftsStore.register(accountPeerId: peerId, store: self.miraFakeGiftsStore)
+        self.miraFakeChannelsStore = MiraFakeChannelsStore(basePath: basePath)
+        MiraFakeChannelsStore.register(accountPeerId: peerId, store: self.miraFakeChannelsStore)
+        self.miraLocalProfileOverridesStore = MiraLocalProfileOverridesStore(basePath: basePath)
         self.miraFakeStarsLedger = MiraFakeStarsLedger(basePath: basePath)
         MiraFakeStarsLedger.register(accountPeerId: peerId, ledger: self.miraFakeStarsLedger)
         

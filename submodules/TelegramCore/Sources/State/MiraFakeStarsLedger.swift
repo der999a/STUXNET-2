@@ -13,6 +13,8 @@ public enum MiraFakeStarsLedgerEntryKind: String, Codable {
     case fakeGiftTransfer
     case fakeGiftConversion
     case fakeStarsMessage
+    case fakeChannelPost
+    case fakeChannelReaction
 }
 
 public struct MiraFakeStarsLedgerEntry: Codable, Equatable {
@@ -45,12 +47,26 @@ public struct MiraFakeStarsLedgerEntry: Codable, Equatable {
 }
 
 public struct MiraFakeStarsLedgerSnapshot: Codable, Equatable {
+    public static let currentSchemaVersion = 1
+    public let schemaVersion: Int
     public let balance: Int64
     public let entries: [MiraFakeStarsLedgerEntry]
 
-    public init(balance: Int64 = 0, entries: [MiraFakeStarsLedgerEntry] = []) {
+    public init(schemaVersion: Int = MiraFakeStarsLedgerSnapshot.currentSchemaVersion, balance: Int64 = 0, entries: [MiraFakeStarsLedgerEntry] = []) {
+        self.schemaVersion = schemaVersion
         self.balance = max(0, balance)
         self.entries = entries
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, balance, entries
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
+        self.balance = max(0, try container.decodeIfPresent(Int64.self, forKey: .balance) ?? 0)
+        self.entries = try container.decodeIfPresent([MiraFakeStarsLedgerEntry].self, forKey: .entries) ?? []
     }
 }
 
@@ -76,6 +92,8 @@ public final class MiraFakeStarsLedger {
     private var balanceCache: Int64 = 0
     private var entriesCache: [MiraFakeStarsLedgerEntry] = []
     private var didLoad = false
+    private var needsMigrationWrite = false
+    private var readOnly = false
     private let changesPromise = ValuePromise<MiraFakeStarsLedgerSnapshot>(MiraFakeStarsLedgerSnapshot(), ignoreRepeated: true)
 
     public init(basePath: String) {
@@ -94,11 +112,22 @@ public final class MiraFakeStarsLedger {
         if let snapshot = try? JSONDecoder().decode(MiraFakeStarsLedgerSnapshot.self, from: data) {
             self.balanceCache = max(0, snapshot.balance)
             self.entriesCache = snapshot.entries
+            self.readOnly = snapshot.schemaVersion > MiraFakeStarsLedgerSnapshot.currentSchemaVersion
+            self.needsMigrationWrite = snapshot.schemaVersion < MiraFakeStarsLedgerSnapshot.currentSchemaVersion
         } else if let legacyEntries = try? JSONDecoder().decode([MiraFakeStarsLedgerEntry].self, from: data) {
             // Be liberal when recovering an early experimental build that
             // wrote only the journal array.
             self.entriesCache = legacyEntries
             self.balanceCache = max(0, legacyEntries.last?.balance ?? 0)
+            self.needsMigrationWrite = true
+        } else {
+            // Preserve an unreadable journal instead of replacing it with an
+            // empty ledger on the first edit.
+            self.readOnly = true
+        }
+        if self.needsMigrationWrite && !self.readOnly {
+            self.persistLocked()
+            self.needsMigrationWrite = false
         }
         self.publishLocked()
     }
@@ -129,6 +158,13 @@ public final class MiraFakeStarsLedger {
         return self.snapshot().balance
     }
 
+    public var isReadOnly: Bool {
+        return self.queue.sync {
+            self.loadIfNeeded()
+            return self.readOnly
+        }
+    }
+
     public var entries: [MiraFakeStarsLedgerEntry] {
         return self.snapshot().entries
     }
@@ -139,7 +175,7 @@ public final class MiraFakeStarsLedger {
         }
         return self.queue.sync {
             self.loadIfNeeded()
-            return amount <= self.balanceCache
+            return !self.readOnly && amount <= self.balanceCache
         }
     }
 
@@ -165,6 +201,9 @@ public final class MiraFakeStarsLedger {
         let normalized = max(0, value)
         return self.queue.sync {
             self.loadIfNeeded()
+            guard !self.readOnly else {
+                return false
+            }
             guard normalized != self.balanceCache else {
                 return true
             }
@@ -197,11 +236,14 @@ public final class MiraFakeStarsLedger {
         }
         return self.queue.sync {
             self.loadIfNeeded()
-            guard amount <= self.balanceCache else {
+            guard !self.readOnly else {
                 return false
             }
             guard !self.hasEntryLocked(kind: kind, relatedId: relatedId) else {
                 return true
+            }
+            guard amount <= self.balanceCache else {
+                return false
             }
             let next = self.balanceCache - amount
             self.balanceCache = next
@@ -243,6 +285,9 @@ public final class MiraFakeStarsLedger {
         }
         return self.queue.sync {
             self.loadIfNeeded()
+            guard !self.readOnly else {
+                return false
+            }
             let removalId = "\(id):delete"
             guard !self.hasEntryLocked(kind: .fakeStarsMessage, relatedId: removalId) else {
                 return false
@@ -298,6 +343,9 @@ public final class MiraFakeStarsLedger {
     public func removeFakeStarsMessage(id: String, peerId: Int64, date: Int32 = MiraFakeStarsLedger.currentTimestamp()) -> Bool {
         return self.queue.sync {
             self.loadIfNeeded()
+            guard !self.readOnly else {
+                return false
+            }
             let removalId = "\(id):delete"
             if self.hasEntryLocked(kind: .fakeStarsMessage, relatedId: removalId) {
                 return true
@@ -356,6 +404,176 @@ public final class MiraFakeStarsLedger {
         return self.credit(stars, kind: .fakeGiftConversion, relatedId: id, peerId: peerId, date: date, note: "Fake gift conversion")
     }
 
+    /// Records Stars assigned to a local channel post. The related id is
+    /// stable across editor saves, so replaying a save after a UI interruption
+    /// cannot double-credit the account ledger.
+    @discardableResult
+    public func recordChannelPostStars(id: String, peerId: Int64, stars: Int64, date: Int32 = MiraFakeStarsLedger.currentTimestamp()) -> Bool {
+        guard stars >= 0 else {
+            return false
+        }
+        return self.credit(stars, kind: .fakeChannelPost, relatedId: id, peerId: peerId, date: date, note: "Fake channel post Stars")
+    }
+
+    /// Applies only the changed part of a local post's Stars total. Each
+    /// target value gets one deterministic journal id, making repeated UI
+    /// updates idempotent after a restart.
+    @discardableResult
+    public func adjustChannelPostStars(id: String, peerId: Int64, oldStars: Int64, newStars: Int64, date: Int32 = MiraFakeStarsLedger.currentTimestamp()) -> Bool {
+        let oldValue = max(0, oldStars)
+        let newValue = max(0, newStars)
+        guard oldValue != newValue else {
+            return true
+        }
+        return self.queue.sync {
+            self.loadIfNeeded()
+            guard !self.readOnly else {
+                return false
+            }
+            let prefix = "\(id):"
+            var currentEffect: Int64 = 0
+            for entry in self.entriesCache where entry.kind == .fakeChannelPost && (entry.relatedId == id || entry.relatedId?.hasPrefix(prefix) == true) {
+                let result = currentEffect.addingReportingOverflow(entry.delta)
+                guard !result.overflow else { return false }
+                currentEffect = result.partialValue
+            }
+            if currentEffect == newValue {
+                return true
+            }
+            guard currentEffect == oldValue else {
+                return false
+            }
+            let deltaResult = newValue.subtractingReportingOverflow(oldValue)
+            guard !deltaResult.overflow else { return false }
+            let delta = deltaResult.partialValue
+            if delta < 0 {
+                guard delta != Int64.min, self.balanceCache >= -delta else { return false }
+            } else {
+                guard self.balanceCache <= Int64.max - delta else { return false }
+            }
+            let nextBalance = self.balanceCache + delta
+            self.balanceCache = nextBalance
+            self.entriesCache.append(MiraFakeStarsLedgerEntry(
+                date: date,
+                delta: delta,
+                balance: nextBalance,
+                kind: .fakeChannelPost,
+                relatedId: "\(id):edit:\(UUID().uuidString)",
+                peerId: peerId,
+                note: "Fake channel post Stars edit"
+            ))
+            self.persistLocked()
+            self.publishLocked()
+            return true
+        }
+    }
+
+    @discardableResult
+    public func recordChannelReactionStars(id: String, peerId: Int64, stars: Int64, date: Int32 = MiraFakeStarsLedger.currentTimestamp()) -> Bool {
+        guard stars >= 0 else {
+            return false
+        }
+        return self.credit(stars, kind: .fakeChannelReaction, relatedId: id, peerId: peerId, date: date, note: "Fake channel Stars reactions")
+    }
+
+    /// Updates the two independent Stars counters stored on a local channel
+    /// post in one ledger transaction. The post Stars and reaction Stars are
+    /// kept as separate entry kinds for history and stats, while the balance
+    /// is changed once by their combined delta. Replaying the same save is a
+    /// no-op and a failed debit leaves both counters untouched.
+    @discardableResult
+    public func adjustChannelStars(id: String, peerId: Int64, oldPostStars: Int64, newPostStars: Int64, oldReactionStars: Int64, newReactionStars: Int64, date: Int32 = MiraFakeStarsLedger.currentTimestamp()) -> Bool {
+        let oldPost = max(0, oldPostStars)
+        let newPost = max(0, newPostStars)
+        let oldReaction = max(0, oldReactionStars)
+        let newReaction = max(0, newReactionStars)
+        return self.queue.sync {
+            self.loadIfNeeded()
+            guard !self.readOnly else {
+                return false
+            }
+
+            func effect(for kind: MiraFakeStarsLedgerEntryKind) -> Int64? {
+                var value: Int64 = 0
+                for entry in self.entriesCache where entry.kind == kind && (entry.relatedId == id || entry.relatedId?.hasPrefix("\(id):") == true) {
+                    let result = value.addingReportingOverflow(entry.delta)
+                    if result.overflow {
+                        return nil
+                    }
+                    value = result.partialValue
+                }
+                return value
+            }
+
+            guard let storedPost = effect(for: .fakeChannelPost), let storedReaction = effect(for: .fakeChannelReaction) else {
+                return false
+            }
+            // Older builds combined post Stars and reaction Stars into one
+            // `.fakeChannelPost` total. Recognize that shape on first edit and
+            // reclassify it while applying only the net balance delta.
+            let legacyTotal = MiraFakeStarsLedger.saturatingSum([oldPost, oldReaction])
+            let isLegacyCombined = storedReaction == 0 && oldReaction > 0 && storedPost == legacyTotal
+            let currentPost = isLegacyCombined ? legacyTotal : storedPost
+            let currentReaction: Int64 = isLegacyCombined ? 0 : storedReaction
+            if currentPost == newPost && currentReaction == newReaction {
+                return true
+            }
+            guard (isLegacyCombined || currentPost == oldPost) && (isLegacyCombined || currentReaction == oldReaction) else {
+                return false
+            }
+            let postDeltaResult = newPost.subtractingReportingOverflow(oldPost)
+            let reactionDeltaResult = newReaction.subtractingReportingOverflow(oldReaction)
+            guard !postDeltaResult.overflow && !reactionDeltaResult.overflow else {
+                return false
+            }
+            let combinedResult = postDeltaResult.partialValue.addingReportingOverflow(reactionDeltaResult.partialValue)
+            guard !combinedResult.overflow else {
+                return false
+            }
+            let combinedDelta = combinedResult.partialValue
+            if combinedDelta < 0 {
+                guard combinedDelta != Int64.min, self.balanceCache >= -combinedDelta else {
+                    return false
+                }
+            } else {
+                guard self.balanceCache <= Int64.max - combinedDelta else {
+                    return false
+                }
+            }
+
+            let nextBalance = self.balanceCache + combinedDelta
+            self.balanceCache = nextBalance
+            var entryBalance = self.balanceCache - combinedDelta
+            if postDeltaResult.partialValue != 0 {
+                entryBalance += postDeltaResult.partialValue
+                self.entriesCache.append(MiraFakeStarsLedgerEntry(
+                    date: date,
+                    delta: postDeltaResult.partialValue,
+                    balance: entryBalance,
+                    kind: .fakeChannelPost,
+                    relatedId: "\(id):edit:post:\(UUID().uuidString)",
+                    peerId: peerId,
+                    note: "Fake channel post Stars edit"
+                ))
+            }
+            if reactionDeltaResult.partialValue != 0 {
+                entryBalance += reactionDeltaResult.partialValue
+                self.entriesCache.append(MiraFakeStarsLedgerEntry(
+                    date: date,
+                    delta: reactionDeltaResult.partialValue,
+                    balance: entryBalance,
+                    kind: .fakeChannelReaction,
+                    relatedId: "\(id):edit:reaction:\(UUID().uuidString)",
+                    peerId: peerId,
+                    note: "Fake channel Stars reaction edit"
+                ))
+            }
+            self.persistLocked()
+            self.publishLocked()
+            return true
+        }
+    }
+
     public func hasEntry(kind: MiraFakeStarsLedgerEntryKind, relatedId: String?) -> Bool {
         return self.queue.sync {
             self.loadIfNeeded()
@@ -370,10 +588,17 @@ public final class MiraFakeStarsLedger {
         return self.entriesCache.contains { $0.kind == kind && $0.relatedId == relatedId }
     }
 
+    private static func saturatingSum(_ values: [Int64]) -> Int64 {
+        return values.reduce(Int64(0)) { partial, value in
+            let result = partial.addingReportingOverflow(value)
+            return result.overflow ? Int64.max : result.partialValue
+        }
+    }
+
     private func apply(amount: Int64, kind: MiraFakeStarsLedgerEntryKind, relatedId: String?, peerId: Int64?, date: Int32, note: String?) -> Bool {
         return self.queue.sync {
             self.loadIfNeeded()
-            guard !self.hasEntryLocked(kind: kind, relatedId: relatedId), amount >= 0,
+            guard !self.readOnly, !self.hasEntryLocked(kind: kind, relatedId: relatedId), amount >= 0,
                   self.balanceCache <= Int64.max - amount else {
                 return self.hasEntryLocked(kind: kind, relatedId: relatedId)
             }
@@ -388,6 +613,8 @@ public final class MiraFakeStarsLedger {
 
     public func clear() {
         self.queue.sync {
+            self.loadIfNeeded()
+            guard !self.readOnly else { return }
             self.didLoad = true
             self.balanceCache = 0
             self.entriesCache.removeAll()

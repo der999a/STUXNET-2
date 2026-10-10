@@ -357,14 +357,13 @@ final class StarsTransactionsScreenComponent: Component {
             let presentationData = component.context.sharedContext.currentPresentationData.with { $0 }
             
             if self.stateDisposable == nil {
-                self.stateDisposable = (component.starsContext.state
-                |> deliverOnMainQueue).start(next: { [weak self] state in
+                self.stateDisposable = (combineLatest(queue: Queue.mainQueue(), component.starsContext.state, component.context.account.miraFakeStarsLedger.changes, miraSettingsSignal(accountManager: component.context.sharedContext.accountManager))
+                |> deliverOnMainQueue).start(next: { [weak self] state, fakeStarsLedger, miraSettings in
                     guard let self else {
                         return
                     }
-                    let miraSettings = component.context.sharedContext.immediateMiraSettings
                     if var state, miraSettings.fakeStarsEnabled {
-                        state.balance = StarsAmount(value: miraSettings.fakeStarsBalance, nanos: 0)
+                        state.balance = StarsAmount(value: fakeStarsLedger.balance, nanos: 0)
                         self.starsState = state
                     } else {
                         self.starsState = state

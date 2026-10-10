@@ -3,6 +3,11 @@ import Postbox
 import SwiftSignalKit
 
 public struct MiraFakeGift: Codable, Equatable {
+    /// Telegram charges 25 Stars when a collectible gift is transferred.
+    /// Keep this in the local model so old entries and every projection use
+    /// one authoritative default instead of silently creating free transfers.
+    public static let defaultNFTTransferStars: Int64 = 25
+
     public enum Kind: String, Codable {
         case regular
         case uniqueBySlug
@@ -20,6 +25,7 @@ public struct MiraFakeGift: Codable, Equatable {
         case fromName
         case caption
         case ownerPeerId
+        case pendingTransferRecipientPeerId
         case date
         case isHidden
         case isSaved
@@ -43,6 +49,10 @@ public struct MiraFakeGift: Codable, Equatable {
     /// Packed local owner used by transferred fake NFTs. It is optional so
     /// older entries continue to resolve to the current account owner.
     public var ownerPeerId: Int64?
+    /// Durable transfer intent. It is set before the destination projection or
+    /// Stars debit so an interrupted transfer can only be resumed for the
+    /// originally selected recipient.
+    public var pendingTransferRecipientPeerId: Int64?
     public var date: Int32
     public var isHidden: Bool
     public var isSaved: Bool
@@ -82,6 +92,7 @@ public struct MiraFakeGift: Codable, Equatable {
         fromName: String? = nil,
         caption: String? = nil,
         ownerPeerId: Int64? = nil,
+        pendingTransferRecipientPeerId: Int64? = nil,
         date: Int32,
         isHidden: Bool = false,
         isSaved: Bool = false,
@@ -101,11 +112,16 @@ public struct MiraFakeGift: Codable, Equatable {
         self.fromName = fromName
         self.caption = caption
         self.ownerPeerId = ownerPeerId
+        self.pendingTransferRecipientPeerId = pendingTransferRecipientPeerId
         self.date = date
         self.isHidden = isHidden
         self.isSaved = isSaved
         self.showInChat = showInChat
-        self.transferStars = transferStars.map { max(0, $0) }
+        if kind == .regular {
+            self.transferStars = nil
+        } else {
+            self.transferStars = max(Self.defaultNFTTransferStars, transferStars ?? Self.defaultNFTTransferStars)
+        }
         self.chatMessagePeerId = chatMessagePeerId
         self.chatMessageId = chatMessageId
         self.giftSnapshot = giftSnapshot
@@ -123,11 +139,19 @@ public struct MiraFakeGift: Codable, Equatable {
         self.fromName = try container.decodeIfPresent(String.self, forKey: .fromName)
         self.caption = try container.decodeIfPresent(String.self, forKey: .caption)
         self.ownerPeerId = try container.decodeIfPresent(Int64.self, forKey: .ownerPeerId)
+        self.pendingTransferRecipientPeerId = try container.decodeIfPresent(Int64.self, forKey: .pendingTransferRecipientPeerId)
         self.date = try container.decodeIfPresent(Int32.self, forKey: .date) ?? 0
         self.isHidden = try container.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
         self.isSaved = try container.decodeIfPresent(Bool.self, forKey: .isSaved) ?? false
         self.showInChat = try container.decodeIfPresent(Bool.self, forKey: .showInChat) ?? false
-        self.transferStars = try container.decodeIfPresent(Int64.self, forKey: .transferStars).map { max(0, $0) }
+        let decodedTransferStars = try container.decodeIfPresent(Int64.self, forKey: .transferStars)
+        if self.kind == .regular {
+            self.transferStars = nil
+        } else {
+            // Upgrade legacy local NFT entries that persisted nil/0 when
+            // transfer fees were still optional.
+            self.transferStars = max(Self.defaultNFTTransferStars, decodedTransferStars ?? Self.defaultNFTTransferStars)
+        }
         self.chatMessagePeerId = try container.decodeIfPresent(Int64.self, forKey: .chatMessagePeerId)
         self.chatMessageId = try container.decodeIfPresent(Int32.self, forKey: .chatMessageId)
         self.giftSnapshot = try container.decodeIfPresent(StarGift.self, forKey: .giftSnapshot)
@@ -183,6 +207,17 @@ public struct MiraFakeGift: Codable, Equatable {
     }
 }
 
+public struct MiraFakeGiftsSnapshot: Codable, Equatable {
+    public static let currentSchemaVersion = 1
+    public let schemaVersion: Int
+    public let gifts: [MiraFakeGift]
+
+    public init(schemaVersion: Int = MiraFakeGiftsSnapshot.currentSchemaVersion, gifts: [MiraFakeGift] = []) {
+        self.schemaVersion = schemaVersion
+        self.gifts = gifts
+    }
+}
+
 public final class MiraFakeGiftsStore {
     private static let registryQueue = DispatchQueue(label: "org.telegram.mira.fakeGiftsStore.registry")
     private static var registeredStores: [Int64: MiraFakeGiftsStore] = [:]
@@ -207,6 +242,8 @@ public final class MiraFakeGiftsStore {
     private let filePath: String
     private var cache: [MiraFakeGift] = []
     private var didLoad = false
+    private var needsMigrationWrite = false
+    private var readOnly = false
 
     private let changesPromise = ValuePromise<[MiraFakeGift]>([], ignoreRepeated: true)
 
@@ -226,7 +263,15 @@ public final class MiraFakeGiftsStore {
             return
         }
         self.didLoad = true
-        if let data = FileManager.default.contents(atPath: self.filePath), let gifts = try? JSONDecoder().decode([MiraFakeGift].self, from: data) {
+        guard let data = FileManager.default.contents(atPath: self.filePath) else {
+            self.publishLocked()
+            return
+        }
+        if let snapshot = try? JSONDecoder().decode(MiraFakeGiftsSnapshot.self, from: data) {
+            self.readOnly = snapshot.schemaVersion > MiraFakeGiftsSnapshot.currentSchemaVersion
+            self.needsMigrationWrite = snapshot.schemaVersion < MiraFakeGiftsSnapshot.currentSchemaVersion
+            self.cache = snapshot.gifts
+        } else if let gifts = try? JSONDecoder().decode([MiraFakeGift].self, from: data) {
             // Older builds could append the same entry more than once when an edit
             // raced an asynchronous insert. Keep the newest copy by id so the
             // profile and chat projections remain one-to-one.
@@ -241,18 +286,31 @@ public final class MiraFakeGiftsStore {
                 }
             }
             self.cache = uniqueGifts
-            if self.cache.count != gifts.count {
-                self.saveLocked()
-            }
+            self.needsMigrationWrite = true
+        } else {
+            // Never overwrite an unreadable local file with an empty cache.
+            // Keeping the store read-only preserves recovery data and mirrors
+            // the future-schema behavior used by the other local stores.
+            self.readOnly = true
+        }
+        if self.needsMigrationWrite && !self.readOnly {
+            self.saveLocked()
+            self.needsMigrationWrite = false
         }
         self.publishLocked()
     }
 
-    private func saveLocked() {
-        guard let data = try? JSONEncoder().encode(self.cache) else {
-            return
+    @discardableResult
+    private func saveLocked() -> Bool {
+        guard let data = try? JSONEncoder().encode(MiraFakeGiftsSnapshot(gifts: self.cache)) else {
+            return false
         }
-        try? data.write(to: URL(fileURLWithPath: self.filePath), options: [.atomic])
+        do {
+            try data.write(to: URL(fileURLWithPath: self.filePath), options: [.atomic])
+            return true
+        } catch {
+            return false
+        }
     }
 
     public func list() -> [MiraFakeGift] {
@@ -277,6 +335,13 @@ public final class MiraFakeGiftsStore {
         }
     }
 
+    public var isReadOnly: Bool {
+        return self.queue.sync {
+            self.loadIfNeeded()
+            return self.readOnly
+        }
+    }
+
     public func add(_ gift: MiraFakeGift) {
         self.upsert(gift)
     }
@@ -291,6 +356,7 @@ public final class MiraFakeGiftsStore {
     public func upsert(_ gift: MiraFakeGift) {
         self.queue.async {
             self.loadIfNeeded()
+            guard !self.readOnly else { return }
             if let index = self.cache.firstIndex(where: { $0.id == gift.id }) {
                 self.cache[index] = gift
             } else {
@@ -301,10 +367,148 @@ public final class MiraFakeGiftsStore {
         }
     }
 
+    /// Persists an upsert and completes only after the atomic JSON write has
+    /// finished.  Transfer/conversion workflows use this barrier before
+    /// deleting their source entry so a process interruption cannot lose the
+    /// recipient copy after the source has been removed.
+    private func upsertSignal(_ gift: MiraFakeGift) -> Signal<Void, NoError> {
+        return Signal { [weak self] subscriber in
+            guard let self else {
+                subscriber.putCompletion()
+                return EmptyDisposable
+            }
+            self.queue.async {
+                self.loadIfNeeded()
+                guard !self.readOnly else {
+                    subscriber.putCompletion()
+                    return
+                }
+                if let index = self.cache.firstIndex(where: { $0.id == gift.id }) {
+                    self.cache[index] = gift
+                } else {
+                    self.cache.append(gift)
+                }
+                self.saveLocked()
+                self.publishLocked()
+                subscriber.putCompletion()
+            }
+            return EmptyDisposable
+        }
+    }
+
+    /// Persists a gift before returning.  Most UI edits can use the
+    /// asynchronous `upsert`, but multi-step operations such as a local NFT
+    /// transfer must make the recipient record durable before removing the
+    /// source record.  Keeping this on the store queue also preserves the
+    /// same idempotent replacement semantics as `upsert`.
+    @discardableResult
+    public func upsertAndWait(_ gift: MiraFakeGift) -> Bool {
+        return self.queue.sync {
+            self.loadIfNeeded()
+            guard !self.readOnly else { return false }
+            let previousCache = self.cache
+            if let index = self.cache.firstIndex(where: { $0.id == gift.id }) {
+                // A pending transfer intent is a compare-and-set value. Two
+                // UI taps can race before either callback returns; once the
+                // first tap binds a recipient, a second tap may only replay
+                // that same recipient and cannot redirect the gift.
+                let existing = self.cache[index]
+                if let existingRecipient = existing.pendingTransferRecipientPeerId,
+                   existingRecipient != gift.pendingTransferRecipientPeerId {
+                    return false
+                }
+                self.cache[index] = gift
+            } else {
+                self.cache.append(gift)
+            }
+            guard self.saveLocked() else {
+                self.cache = previousCache
+                return false
+            }
+            self.publishLocked()
+            return true
+        }
+    }
+
     public func remove(id: String) {
         self.queue.async {
             self.loadIfNeeded()
+            guard !self.readOnly else { return }
             self.cache.removeAll(where: { $0.id == id })
+            self.saveLocked()
+            self.publishLocked()
+        }
+    }
+
+    /// Removes an entry and completes after the durable write.  Keeping this
+    /// separate from the fire-and-forget UI helper makes multi-step local
+    /// operations restart-safe.
+    private func removeSignal(id: String) -> Signal<Void, NoError> {
+        return Signal { [weak self] subscriber in
+            guard let self else {
+                subscriber.putCompletion()
+                return EmptyDisposable
+            }
+            self.queue.async {
+                self.loadIfNeeded()
+                guard !self.readOnly else {
+                    subscriber.putCompletion()
+                    return
+                }
+                let previousCount = self.cache.count
+                self.cache.removeAll(where: { $0.id == id })
+                if self.cache.count != previousCount {
+                    self.saveLocked()
+                    self.publishLocked()
+                }
+                subscriber.putCompletion()
+            }
+            return EmptyDisposable
+        }
+    }
+
+    /// Removes one entry and waits until the new snapshot is durable. This is
+    /// used only by multi-step local transfers; ordinary UI cleanup remains
+    /// asynchronous.
+    @discardableResult
+    public func removeAndWait(id: String) -> Bool {
+        return self.queue.sync {
+            self.loadIfNeeded()
+            guard !self.readOnly else { return false }
+            let previousCache = self.cache
+            self.cache.removeAll(where: { $0.id == id })
+            guard self.cache != previousCache else { return true }
+            guard self.saveLocked() else {
+                self.cache = previousCache
+                return false
+            }
+            self.publishLocked()
+            return true
+        }
+    }
+
+    /// Removes local gift records whose Postbox action was deleted. The
+    /// message row and this durable projection are intentionally cleaned up
+    /// together so a normal chat delete cannot resurrect the gift on restart.
+    public func remove(chatMessageIds: Set<MessageId>) {
+        guard !chatMessageIds.isEmpty else {
+            return
+        }
+        self.queue.async {
+            self.loadIfNeeded()
+            guard !self.readOnly else { return }
+            let previousCount = self.cache.count
+            self.cache.removeAll { entry in
+                guard let packedPeerId = entry.chatMessagePeerId,
+                      let messageId = entry.chatMessageId,
+                      let peerId = MiraMessageHistoryStore.peerId(fromPackedValue: packedPeerId) else {
+                    return false
+                }
+                return chatMessageIds.contains(MessageId(peerId: peerId, namespace: Namespaces.Message.Local, id: messageId))
+            }
+            guard self.cache.count != previousCount else {
+                return
+            }
             self.saveLocked()
             self.publishLocked()
         }
@@ -313,6 +517,7 @@ public final class MiraFakeGiftsStore {
     public func updateSnapshot(id: String, snapshot: StarGift) {
         self.queue.async {
             self.loadIfNeeded()
+            guard !self.readOnly else { return }
             if let index = self.cache.firstIndex(where: { $0.id == id }), self.cache[index].giftSnapshot == nil {
                 self.cache[index].giftSnapshot = snapshot
                 self.saveLocked()
@@ -340,6 +545,7 @@ public final class MiraFakeGiftsStore {
         }
         self.queue.async {
             self.loadIfNeeded()
+            guard !self.readOnly else { return }
             guard let index = self.cache.firstIndex(where: { $0.stableSavedId == savedId }) else {
                 return
             }
@@ -367,6 +573,8 @@ public final class MiraFakeGiftsStore {
 
     public func clear() {
         self.queue.async {
+            self.loadIfNeeded()
+            guard !self.readOnly else { return }
             self.didLoad = true
             self.cache.removeAll()
             try? FileManager.default.removeItem(atPath: self.filePath)
@@ -377,6 +585,9 @@ public final class MiraFakeGiftsStore {
     /// Clears fake gifts and their local-only chat projections together. The
     /// plain `clear()` method remains for callers that only need to reset data.
     public func clear(account: Account) {
+        guard !self.isReadOnly else {
+            return
+        }
         let entries = self.list()
         let messageIds = entries.compactMap { entry -> MessageId? in
             guard let value = entry.chatMessagePeerId, let peerId = MiraMessageHistoryStore.peerId(fromPackedValue: value), let id = entry.chatMessageId else {
@@ -396,14 +607,31 @@ public final class MiraFakeGiftsStore {
 
 extension MiraFakeGiftsStore {
     public func resolvedProfileGifts(account: Account) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
-        return self.resolvedProfileGifts(account: account, entries: self.list())
+        return self.resolvedProfileGifts(account: account, entries: self.list(), ownerPeerId: account.peerId)
     }
 
     public func resolvedProfileGifts(account: Account, entries: [MiraFakeGift]) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
-        if entries.isEmpty {
+        return self.resolvedProfileGifts(account: account, entries: entries, ownerPeerId: account.peerId)
+    }
+
+    /// Resolves local gifts for the profile currently being viewed. The store
+    /// is account-local, but a fake transfer can assign ownership to another
+    /// peer on this device; filtering by the requested profile keeps the
+    /// recipient's gift shelf and the account's own shelf consistent.
+    public func resolvedProfileGifts(account: Account, entries: [MiraFakeGift], ownerPeerId: PeerId) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
+        let ownedEntries = entries.filter { entry in
+            guard let storedOwnerPeerId = entry.ownerPeerId else {
+                return ownerPeerId == account.peerId
+            }
+            guard let owner = MiraFakeGift.peerId(fromStoredValue: storedOwnerPeerId, isPacked: true) else {
+                return false
+            }
+            return owner == ownerPeerId
+        }
+        if ownedEntries.isEmpty {
             return .single([])
         }
-        return combineLatest(entries.map { self.resolveEntry($0, account: account) })
+        return combineLatest(ownedEntries.map { self.resolveEntry($0, account: account) })
         |> map { values in
             return values.compactMap { $0 }
         }
@@ -474,20 +702,14 @@ extension MiraFakeGiftsStore {
                 var projectedGift = gift
                 if case let .unique(uniqueGift) = gift {
                     let ownerPeerId = entry.ownerPeerId.flatMap { MiraFakeGift.peerId(fromStoredValue: $0, isPacked: true) } ?? account.peerId
-                    let serverOriginalInfo = uniqueGift.attributes.compactMap { attribute -> (EnginePeer.Id?, Int32, String?, [MessageTextEntity]?)? in
-                        if case let .originalInfo(senderPeerId, _, date, text, entities) = attribute {
-                            return (senderPeerId, date, text, entities)
-                        }
-                        return nil
-                    }.first
-                    var attributes = uniqueGift.attributes.filter { $0.attributeType != .originalInfo }
-                    if let serverOriginalInfo {
-                        attributes.append(.originalInfo(senderPeerId: serverOriginalInfo.0, recipientPeerId: ownerPeerId, date: serverOriginalInfo.1, text: serverOriginalInfo.2, entities: serverOriginalInfo.3))
-                    } else if entry.fromPeerId != nil || entry.caption != nil {
-                        attributes.append(.originalInfo(senderPeerId: fromPeer?.id, recipientPeerId: ownerPeerId, date: entry.date, text: entry.caption, entities: nil))
-                    }
-                    // Keep Telegram's model/pattern/backdrop assets, while the
-                    // local sender and recipient drive avatars and profile links.
+                    // `originalInfo` is server-authored gift metadata. Do not
+                    // synthesize it from the local editor's sender/caption:
+                    // Telegram legitimately omits the signature for private or
+                    // transferred gifts, and the UI should preserve that fact.
+                    let attributes = uniqueGift.attributes
+                    // Keep Telegram's model/pattern/backdrop assets and its
+                    // originalInfo exactly as received. Ownership is carried
+                    // by the unique-gift owner field below.
                     projectedGift = .unique(StarGift.UniqueGift(
                         id: uniqueGift.id, giftId: uniqueGift.giftId, title: uniqueGift.title, number: uniqueGift.number, slug: uniqueGift.slug,
                         owner: .peerId(ownerPeerId), attributes: attributes, availability: uniqueGift.availability,
@@ -531,10 +753,10 @@ extension MiraFakeGiftsStore {
                     canUpgrade: genericGift?.upgradeStars != nil,
                     canExportDate: nil,
                     upgradeStars: genericGift?.upgradeStars,
-                    // Local NFTs can be transferred through the same UI as a
-                    // Telegram NFT. A zero fee keeps this operation local and
-                    // prevents the synthetic reference from reaching the API.
-                    transferStars: entry.isUnique ? 0 : nil,
+                    // Local NFTs use the same 25-Star transfer price as a
+                    // Telegram NFT. The synthetic reference still stays
+                    // account-local and never reaches the payments API.
+                    transferStars: entry.isUnique ? (entry.transferStars ?? MiraFakeGift.defaultNFTTransferStars) : nil,
                     canTransferDate: nil,
                     canResaleDate: nil,
                     collectionIds: nil,
@@ -579,7 +801,10 @@ extension MiraFakeGiftsStore {
                 var repairedEntry = entry
                 repairedEntry.chatMessagePeerId = nil
                 repairedEntry.chatMessageId = nil
-                return self.insertChatMessage(account: account, entry: repairedEntry)
+                // Preserve the destination selected by a local transfer when
+                // repairing a missing Postbox row after restart. Dropping it
+                // here silently re-routes the gift to Saved Messages.
+                return self.insertChatMessage(account: account, entry: repairedEntry, forcedChatPeerId: forcedChatPeerId)
             }
         } else if entry.chatMessageId != nil || entry.chatMessagePeerId != nil {
             // Clear malformed legacy references before attempting a fresh
@@ -588,7 +813,7 @@ extension MiraFakeGiftsStore {
             var repairedEntry = entry
             repairedEntry.chatMessagePeerId = nil
             repairedEntry.chatMessageId = nil
-            return self.insertChatMessage(account: account, entry: repairedEntry)
+            return self.insertChatMessage(account: account, entry: repairedEntry, forcedChatPeerId: forcedChatPeerId)
         }
         return self.resolveEntry(entry, account: account)
         |> mapToSignal { resolved -> Signal<MiraFakeGift, NoError> in
@@ -676,7 +901,7 @@ extension MiraFakeGiftsStore {
                         isTransferred: forcedChatPeerId != nil,
                         savedToProfile: !entry.isHidden || entry.isSaved,
                         canExportDate: nil,
-                        transferStars: entry.isUnique ? 0 : nil,
+                        transferStars: entry.isUnique ? (entry.transferStars ?? MiraFakeGift.defaultNFTTransferStars) : nil,
                         isRefunded: false,
                         isPrepaidUpgrade: false,
                         peerId: ownerPeerId,
@@ -735,7 +960,8 @@ extension MiraFakeGiftsStore {
                     entry.chatMessagePeerId = messageId.peerId.toInt64()
                     entry.chatMessageId = messageId.id
                 }
-                if chatPeerId.namespace == Namespaces.Peer.CloudUser,
+                if [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(chatPeerId.namespace),
+                   transaction.getPeer(chatPeerId) != nil,
                    case .notIncluded = transaction.getPeerChatListInclusion(chatPeerId) {
                     transaction.updatePeerChatListInclusion(chatPeerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
                 }
@@ -774,7 +1000,7 @@ extension MiraFakeGiftsStore {
             // lose the gift without crediting the local Stars ledger.
             guard !entry.isUnique,
                   case let .generic(gift)? = entry.giftSnapshot,
-                  gift.convertStars >= 0,
+                   gift.convertStars > 0,
                   account.miraFakeStarsLedger.recordGiftConversion(
                       id: entry.id,
                       peerId: account.peerId.toInt64(),
@@ -812,36 +1038,98 @@ extension MiraFakeGiftsStore {
             // balance intact until the editor resolves the gift.
             return .fail(.generic)
         }
-        let transferFee = source.transferStars ?? 0
-        guard account.miraFakeStarsLedger.recordGiftTransfer(
-            id: source.id,
-            peerId: recipientPeerId.toInt64(),
-            fee: transferFee,
-            date: Int32(clamping: Int64(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970))
-        ) else {
-            // Insufficient local fake Stars leaves the source gift intact.
+        let transferFee = max(MiraFakeGift.defaultNFTTransferStars, source.transferStars ?? MiraFakeGift.defaultNFTTransferStars)
+        let recipientValue = recipientPeerId.toInt64()
+        if let pendingRecipient = source.pendingTransferRecipientPeerId, pendingRecipient != recipientValue {
             return .fail(.generic)
         }
-        let remove = self.deleteChatMessageSignal(account: account, entry: source)
-        return (remove |> castError(TransferStarGiftError.self))
-        |> mapToSignal { [weak self] _ -> Signal<Never, TransferStarGiftError> in
+        let transferPrefix = "\(source.id):transfer:"
+        let transferId = "\(transferPrefix)\(recipientValue)"
+
+        // A transfer is staged before the ledger debit. If the process stops
+        // at any point in that window, the source remains visible and the
+        // staged destination is the durable intent. Refuse a retry aimed at a
+        // different recipient so an interrupted local transfer cannot fork
+        // into two owners.
+        let stagedTransfers = self.list().filter { $0.id.hasPrefix(transferPrefix) }
+        guard stagedTransfers.allSatisfy({ $0.id == transferId }) else {
+            return .fail(.generic)
+        }
+
+        // Bind the source before writing the destination/ledger. This is the
+        // durable intent that makes a process interruption retryable without
+        // allowing a later tap to select another recipient.
+        var stagedSource = source
+        stagedSource.pendingTransferRecipientPeerId = recipientValue
+        guard self.upsertAndWait(stagedSource) else {
+            return .fail(.generic)
+        }
+
+        // The ledger is durable independently of the gift JSON. A crash after
+        // the debit but before source cleanup must be resumable for the same
+        // recipient and must never be redirected to another peer.
+        let existingLedgerEntry = account.miraFakeStarsLedger.snapshot().entries.reversed().first {
+            $0.kind == .fakeGiftTransfer && $0.relatedId == source.id
+        }
+        if let existingLedgerEntry {
+            guard existingLedgerEntry.peerId == recipientValue else {
+                return .fail(.generic)
+            }
+        }
+
+        var transferred = source
+        transferred.id = transferId
+        transferred.fromPeerId = account.peerId.toInt64()
+        transferred.fromPeerIdIsPacked = true
+        transferred.ownerPeerId = recipientValue
+        transferred.pendingTransferRecipientPeerId = nil
+        transferred.fromName = nil
+        transferred.date = Int32(clamping: Int64(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970))
+        transferred.chatMessagePeerId = nil
+        transferred.chatMessageId = nil
+        transferred.showInChat = true
+        // Persist the recipient projection before deleting the source. This
+        // ordering makes a crash recoverable: a retry finds the same transfer
+        // id, replaces its chat row, and then removes the source.
+        return self.insertChatMessage(account: account, entry: transferred, forcedChatPeerId: recipientPeerId)
+        |> mapToSignal { [weak self] inserted -> Signal<Never, TransferStarGiftError> in
             guard let self else {
                 return .complete()
             }
-            self.remove(id: source.id)
-            var transferred = source
-            transferred.id = UUID().uuidString
-            transferred.fromPeerId = account.peerId.toInt64()
-            transferred.fromPeerIdIsPacked = true
-            transferred.ownerPeerId = recipientPeerId.toInt64()
-            transferred.fromName = nil
-            transferred.date = Int32(clamping: Int64(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970))
-            transferred.chatMessagePeerId = nil
-            transferred.chatMessageId = nil
-            transferred.showInChat = true
-            return self.insertChatMessage(account: account, entry: transferred, forcedChatPeerId: recipientPeerId)
-            |> ignoreValues
-            |> castError(TransferStarGiftError.self)
+            // The source must remain until the recipient projection is
+            // durably persisted. If the process stops after this point, a
+            // retry sees the deterministic transfer id and can safely finish
+            // cleanup without charging the fee twice.
+            guard self.upsertAndWait(inserted) else {
+                return .fail(.generic)
+            }
+            // Charge only after the recipient snapshot is durable. Ledger
+            // writes are idempotent by source id, so a retry after an
+            // interruption cannot charge twice.
+            guard account.miraFakeStarsLedger.recordGiftTransfer(
+                id: source.id,
+                peerId: recipientValue,
+                fee: transferFee,
+                date: Int32(clamping: Int64(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970))
+            ) else {
+                // Insufficient local Stars must leave the source untouched
+                // and remove the staged recipient projection.
+                let rollbackMessage = self.deleteChatMessageSignal(account: account, entry: inserted)
+                return ((rollbackMessage |> castError(TransferStarGiftError.self)) |> mapToSignal { _ -> Signal<Never, TransferStarGiftError> in
+                    guard self.removeAndWait(id: inserted.id) else {
+                        return .fail(.generic)
+                    }
+                    return .fail(.generic)
+                })
+            }
+            let remove = self.deleteChatMessageSignal(account: account, entry: source)
+            return (remove |> castError(TransferStarGiftError.self))
+            |> mapToSignal { _ -> Signal<Never, TransferStarGiftError> in
+                guard self.removeAndWait(id: source.id) else {
+                    return .fail(.generic)
+                }
+                return .complete()
+            }
         }
     }
 }

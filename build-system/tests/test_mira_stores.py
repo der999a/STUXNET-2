@@ -24,8 +24,53 @@ ROOT = Path(__file__).resolve().parents[2]
 HISTORY = ROOT / "submodules/TelegramCore/Sources/State/MiraMessageHistoryStore.swift"
 GIFTS = ROOT / "submodules/TelegramCore/Sources/State/MiraFakeGiftsStore.swift"
 LEDGER = ROOT / "submodules/TelegramCore/Sources/State/MiraFakeStarsLedger.swift"
+ENGINE_MESSAGES = ROOT / "submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift"
+REMOVE_OPERATIONS = ROOT / "submodules/TelegramCore/Sources/State/ManagedCloudChatRemoveMessagesOperations.swift"
+CHANNELS = ROOT / "submodules/TelegramCore/Sources/State/MiraFakeChannelsStore.swift"
+FAKE_MESSAGE_UI = ROOT / "submodules/TelegramUI/Sources/MiraFakeMessageController.swift"
 PEER = ROOT / "submodules/Postbox/Sources/Peer.swift"
 SIGNALS = ROOT / "submodules/SSignalKit/SwiftSignalKit/Source"
+
+
+def static_regressions() -> None:
+    """Run source-level guards that are useful even on the Windows host."""
+    engine = ENGINE_MESSAGES.read_text(encoding="utf-8")
+    remove_operations = REMOVE_OPERATIONS.read_text(encoding="utf-8")
+    gifts_source = GIFTS.read_text(encoding="utf-8")
+    if "transaction.getPeer(peerId) != nil" not in engine:
+        raise RuntimeError("fake message insertion must only include existing Telegram peers")
+    if "transaction.getPeer(chatPeerId) != nil" not in gifts_source:
+        raise RuntimeError("fake gift insertion must only include existing Telegram peers")
+    if "defaultNFTTransferStars: Int64 = 25" not in gifts_source:
+        raise RuntimeError("NFT transfer fee must have one 25-Star default")
+    if "entry.fromPeerId != nil || entry.caption != nil" in gifts_source:
+        raise RuntimeError("fake NFT signatures must not be synthesized from local editor fields")
+    if "max(MiraFakeGift.defaultNFTTransferStars, source.transferStars ?? MiraFakeGift.defaultNFTTransferStars)" not in gifts_source:
+        raise RuntimeError("local NFT transfers must debit the normalized 25-Star fee")
+    if "self.upsertAndWait(inserted)" not in gifts_source:
+        raise RuntimeError("transferred local NFTs must durably persist the recipient-owned copy")
+    if "miraFakeStarsLedger.snapshot().entries.reversed().first" not in gifts_source:
+        raise RuntimeError("local NFT transfers must inspect a durable existing ledger entry before retry")
+    if "existingLedgerEntry.peerId == recipientValue" not in gifts_source:
+        raise RuntimeError("local NFT transfer retries must stay bound to the original recipient")
+    if "pendingTransferRecipientPeerId" not in gifts_source:
+        raise RuntimeError("local NFT transfers must persist the selected recipient before staging")
+    if "guard self.upsertAndWait(stagedSource) else" not in gifts_source:
+        raise RuntimeError("local NFT transfers must persist the source intent before destination/ledger work")
+    if gifts_source.find("guard self.upsertAndWait(inserted) else") > gifts_source.find("recordGiftTransfer("):
+        raise RuntimeError("local NFT recipient projection must be durable before charging Stars")
+    if gifts_source.find("guard self.removeAndWait(id: source.id) else") < gifts_source.find("recordGiftTransfer("):
+        raise RuntimeError("local NFT source removal must follow the durable Stars debit")
+    if 'let transferId = "\\(transferPrefix)\\(recipientValue)"' not in gifts_source or "transferred.id = transferId" not in gifts_source:
+        raise RuntimeError("local NFT transfer retry must use one deterministic recipient projection id")
+    scheduled_branch = remove_operations.split("if isScheduled {", 1)[1].split("} else if isQuickReply", 1)[0]
+    if "|> retryRequest" not in scheduled_branch:
+        raise RuntimeError("scheduled-message deletion must retry until the RPC succeeds")
+    if "|> `catch`" in scheduled_branch:
+        raise RuntimeError("scheduled-message deletion must not discard failed RPC operations")
+    fake_message_ui = FAKE_MESSAGE_UI.read_text(encoding="utf-8")
+    if "var datePreset: Int = 0" not in fake_message_ui or '("Now", nil)' not in fake_message_ui:
+        raise RuntimeError("new fake messages must default to the actual current date")
 
 
 def declaration(source: str, start: str, end: str | None = None) -> str:
@@ -95,6 +140,7 @@ def source_for_harness() -> str:
     history = HISTORY.read_text(encoding="utf-8")
     gifts = GIFTS.read_text(encoding="utf-8")
     ledger = LEDGER.read_text(encoding="utf-8")
+    channels = CHANNELS.read_text(encoding="utf-8")
     peer = PEER.read_text(encoding="utf-8")
     history_record = declaration(history, "public struct MiraMessageEditRecord")
     history_local = declaration(history, "public struct LocalOverrideRecord")
@@ -118,6 +164,12 @@ def source_for_harness() -> str:
     ledger_entry = declaration(ledger, "public struct MiraFakeStarsLedgerEntry")
     ledger_snapshot = declaration(ledger, "public struct MiraFakeStarsLedgerSnapshot")
     ledger_store = declaration(ledger, "public final class MiraFakeStarsLedger")
+    fake_channel = declaration(channels, "public struct MiraFakeChannel")
+    fake_channels_snapshot = declaration(channels, "public struct MiraFakeChannelsSnapshot")
+    fake_channels_store = declaration(channels, "public final class MiraFakeChannelsStore")
+    profile_override = declaration(channels, "public struct MiraLocalProfileOverride")
+    profile_overrides_snapshot = declaration(channels, "public struct MiraLocalProfileOverridesSnapshot")
+    profile_overrides_store = declaration(channels, "public final class MiraLocalProfileOverridesStore")
     # Leave account/network projections out of this Foundation persistence test.
     # Their production implementations are compiled by the full app build.
     account_clear = declaration(gift_store, "    public func clear(account: Account)")
@@ -132,7 +184,9 @@ def source_for_harness() -> str:
     ]
     return "\n".join([DOUBLES, *signal_sources, peer_id, history_record,
                        history_local, history_kind, history_media, history_fake, history_store,
-                       gift_model, gift_store, ledger_kind, ledger_entry, ledger_snapshot, ledger_store])
+                       gift_model, gift_store, ledger_kind, ledger_entry, ledger_snapshot, ledger_store,
+                       fake_channel, fake_channels_snapshot, fake_channels_store, profile_override,
+                       profile_overrides_snapshot, profile_overrides_store])
 
 
 TEST_MAIN = r'''
@@ -151,6 +205,29 @@ let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("
 try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(at: root) }
 
+let channels = MiraFakeChannelsStore(basePath: root.path)
+let channel = MiraFakeChannel(title: "Local newsroom", role: .administrator, adminTag: "Editor", roleLabel: "News admin", ownerName: "Local owner", ownerUsername: "owner", starsBalance: 42)
+let post = MiraFakeChannel.Post(text: "Update", views: 8, stars: 3, reactions: ["🔥": 2], date: 1700000100)
+channels.add(channel)
+channels.addPost(channelId: channel.id, post: post)
+let loadedChannels = MiraFakeChannelsStore(basePath: root.path)
+require(loadedChannels.channel(id: channel.id)?.posts.first?.date == 1700000100, "local channel and post persist exact dates")
+require(loadedChannels.channel(id: channel.id)?.starsBalance == 42, "local channel balance persists")
+require(loadedChannels.channel(id: channel.id)?.roleLabel == "News admin", "local channel role label persists")
+require(loadedChannels.channel(id: channel.id)?.ownerUsername == "owner", "local channel owner identity persists")
+loadedChannels.removePost(channelId: channel.id, postId: post.id)
+require(loadedChannels.channel(id: channel.id)?.posts.isEmpty == true, "local post removal persists")
+let localProfile = MiraLocalProfileOverridesStore(basePath: root.path)
+localProfile.set(MiraLocalProfileOverride(id: "account:1", username: "@local", tag: "@owner", phoneNumber: "+100", firstName: "Local", lastName: "Owner"))
+let loadedProfile = MiraLocalProfileOverridesStore(basePath: root.path)
+require(loadedProfile.effectiveUsername(forKey: "account:1", fallback: "server") == "@local", "local profile takes display precedence")
+require(loadedProfile.effectiveTag(forKey: "account:1", fallback: "server-tag") == "owner", "local profile tag projection persists")
+require(loadedProfile.effectivePhoneNumber(forKey: "account:1", fallback: "server-phone") == "+100", "local phone projection persists")
+require(loadedProfile.effectiveDisplayName(forKey: "account:1", fallback: "server name") == "Local Owner", "local profile name projection persists")
+require(loadedProfile.effectiveUsername(forKey: "missing", fallback: "server") == "server", "profile projection preserves missing server fallback")
+loadedProfile.remove(forKey: "account:1")
+require(loadedProfile.effectiveUsername(forKey: "account:1", fallback: "server") == "server", "removed profile override falls back to server")
+
 let gifts = MiraFakeGiftsStore(basePath: root.path)
 let eventLock = NSLock()
 var giftEvents: [[MiraFakeGift]] = []
@@ -158,6 +235,13 @@ func lastGiftCount() -> Int? { eventLock.lock(); defer { eventLock.unlock() }; r
 let giftSubscription = gifts.changes.start(next: { value in _ = gifts.list(); eventLock.lock(); giftEvents.append(value); eventLock.unlock() })
 defer { giftSubscription.dispose() }
 let gift = MiraFakeGift(id: "g1", kind: .regular, giftId: 7, date: 10)
+let nft = MiraFakeGift(id: "nft", kind: .uniqueBySlug, slug: "local", date: 10, transferStars: 0)
+require(nft.transferStars == MiraFakeGift.defaultNFTTransferStars, "NFT transfer fee defaults to 25 Stars")
+var stagedNft = nft
+stagedNft.pendingTransferRecipientPeerId = userId(42).toInt64()
+let decodedNft = try! JSONDecoder().decode(MiraFakeGift.self, from: JSONEncoder().encode(stagedNft))
+require(decodedNft.transferStars == MiraFakeGift.defaultNFTTransferStars, "NFT transfer fee survives persistence")
+require(decodedNft.pendingTransferRecipientPeerId == userId(42).toInt64(), "pending NFT transfer recipient survives persistence")
 gifts.upsert(gift)
 waitUntil { gifts.list().count == 1 && lastGiftCount() == 1 }
 gifts.upsert(MiraFakeGift(id: "g2", kind: .regular, giftId: 8, date: 11))
@@ -294,6 +378,7 @@ print("Mira store regressions passed")
 
 
 def main() -> int:
+    static_regressions()
     if platform.system() != "Darwin":
         print("SKIP: Mira store executable regression requires macOS Swift", file=sys.stderr)
         return 0

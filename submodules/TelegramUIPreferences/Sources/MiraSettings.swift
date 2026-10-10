@@ -59,11 +59,14 @@ public struct MiraGhostSettings: Codable, Equatable {
     }
     
     public var isGhostActive: Bool {
-        return (self.sendReadMessagesLocked || !self.sendReadMessages) &&
-            (self.sendReadStoriesLocked || !self.sendReadStories) &&
-            (self.sendOnlinePacketsLocked || !self.sendOnlinePackets) &&
-            (self.sendUploadProgressLocked || !self.sendUploadProgress) &&
-            (self.sendOfflinePacketAfterOnlineLocked || self.sendOfflinePacketAfterOnline)
+        // A lock only prevents the master switch from changing a value; it
+        // must not make Ghost Mode appear active while that packet is still
+        // allowed to leave the device.
+        return !self.sendReadMessages ||
+            !self.sendReadStories ||
+            !self.sendOnlinePackets ||
+            !self.sendUploadProgress ||
+            self.sendOfflinePacketAfterOnline
     }
     
     public mutating func setGhostModeEnabled(_ enabled: Bool) {
@@ -176,11 +179,18 @@ public enum MiraSocialVideoQuality: Int32, Codable, CaseIterable, Equatable {
 }
 
 public enum MiraSocialVideoDestination: Int32, Codable, CaseIterable, Equatable {
+    /// Resolve the link locally and enqueue the resulting media in the chat
+    /// where the link was sent. The source URL is never persisted as a file
+    /// in the user's Files or Photos library by this mode.
     case files = 0
+    /// Legacy destinations are retained so existing settings decode safely.
     case photos = 1
+    case chat = 2
 
     public var title: String {
         switch self {
+        case .chat:
+            return "Send to current chat"
         case .files:
             return "Files"
         case .photos:
@@ -207,7 +217,7 @@ public struct MiraSocialVideoSettings: Codable, Equatable {
         wifiOnly: Bool = true,
         quality: MiraSocialVideoQuality = .source,
         confirmBeforeDownload: Bool = true,
-        destination: MiraSocialVideoDestination = .files
+        destination: MiraSocialVideoDestination = .chat
     ) {
         self.enabled = enabled
         self.platforms = platforms & MiraSocialVideoSettings.allPlatforms
@@ -238,8 +248,10 @@ public struct MiraSocialVideoSettings: Codable, Equatable {
         let rawQuality = try container.decodeIfPresent(Int32.self, forKey: "quality") ?? MiraSocialVideoQuality.source.rawValue
         self.quality = MiraSocialVideoQuality(rawValue: rawQuality) ?? .source
         self.confirmBeforeDownload = try container.decodeIfPresent(Bool.self, forKey: "confirmBeforeDownload") ?? true
-        let rawDestination = try container.decodeIfPresent(Int32.self, forKey: "destination") ?? MiraSocialVideoDestination.files.rawValue
-        self.destination = MiraSocialVideoDestination(rawValue: rawDestination) ?? .files
+        let rawDestination = try container.decodeIfPresent(Int32.self, forKey: "destination") ?? MiraSocialVideoDestination.chat.rawValue
+        // Version 1 used 0 = Files and 1 = Photos. Keep those persisted
+        // values readable while new settings default to the chat destination.
+        self.destination = MiraSocialVideoDestination(rawValue: rawDestination) ?? .chat
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -330,6 +342,68 @@ public enum MiraSocialVideoLinkParser {
     }
 }
 
+public enum MiraLocalPeerRole: String, Codable, Equatable {
+    case none
+    case owner
+    case administrator
+
+    public var displayName: String {
+        switch self {
+        case .none:
+            return "No role"
+        case .owner:
+            return "Owner"
+        case .administrator:
+            return "Administrator"
+        }
+    }
+}
+
+/// Local-only presentation overrides keyed by a stable Telegram peer id.
+/// These values are intentionally kept outside Telegram's peer models so they
+/// cannot be serialized into API requests or alter server permissions.
+public struct MiraLocalPeerOverride: Codable, Equatable {
+    public var username: String?
+    /// Optional display-only handle/tag. This is intentionally independent
+    /// from username so a fake owner/admin label can be shown without
+    /// changing the peer's projected username.
+    public var tag: String?
+    public var phone: String?
+    public var firstName: String?
+    public var lastName: String?
+    public var role: MiraLocalPeerRole
+
+    public init(username: String? = nil, tag: String? = nil, phone: String? = nil, firstName: String? = nil, lastName: String? = nil, role: MiraLocalPeerRole = .none) {
+        self.username = MiraLocalPeerOverride.normalizedHandle(username)
+        self.tag = MiraLocalPeerOverride.normalizedHandle(tag)
+        self.phone = MiraLocalPeerOverride.normalizedText(phone)
+        self.firstName = MiraLocalPeerOverride.normalizedText(firstName)
+        self.lastName = MiraLocalPeerOverride.normalizedText(lastName)
+        self.role = role
+    }
+
+    public var isEmpty: Bool {
+        return self.username == nil && self.tag == nil && self.phone == nil && self.firstName == nil && self.lastName == nil && self.role == .none
+    }
+
+    public var displayName: String? {
+        let value = [self.firstName, self.lastName].compactMap { $0 }.joined(separator: " ")
+        return value.isEmpty ? nil : value
+    }
+
+    private static func normalizedText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func normalizedHandle(_ value: String?) -> String? {
+        guard let value = normalizedText(value) else { return nil }
+        let withoutAt = value.hasPrefix("@") ? String(value.dropFirst()) : value
+        return withoutAt.isEmpty ? nil : withoutAt
+    }
+}
+
 public struct MiraSettings: Codable, Equatable {
     public var ghost: [String: MiraGhostSettings]
     /// Account-scoped Ghost Mode overrides. Keys use the account's stable peer id
@@ -337,6 +411,9 @@ public struct MiraSettings: Codable, Equatable {
     /// for older settings and per-chat overrides.
     public var ghostByAccount: [String: MiraGhostSettings]
     public var useGlobalGhostMode: Bool
+    /// Local-only username, phone and channel role presentation overrides.
+    /// Keys are decimal `PeerId.toInt64()` values.
+    public var localPeerOverrides: [String: MiraLocalPeerOverride]
     
     public var saveDeletedMessages: Bool
     public var saveMessagesHistory: Bool
@@ -425,6 +502,7 @@ public struct MiraSettings: Codable, Equatable {
         ghost: [String: MiraGhostSettings] = [:],
         ghostByAccount: [String: MiraGhostSettings] = [:],
         useGlobalGhostMode: Bool = true,
+        localPeerOverrides: [String: MiraLocalPeerOverride] = [:],
         saveDeletedMessages: Bool = true,
         saveMessagesHistory: Bool = true,
         saveForBots: Bool = false,
@@ -450,7 +528,7 @@ public struct MiraSettings: Codable, Equatable {
         voiceChangerPreset: Int32 = 0,
         videoMessagesUseBackCamera: Bool = false,
         showLocalOnline: Bool = true,
-        showRealLastSeen: Bool = true,
+        showRealLastSeen: Bool = false,
         localMessageEditEnabled: Bool = true,
         autoClearClipboard: Bool = false,
         hidePhoneNumber: Bool = false,
@@ -472,6 +550,7 @@ public struct MiraSettings: Codable, Equatable {
         self.ghost = ghost
         self.ghostByAccount = ghostByAccount
         self.useGlobalGhostMode = useGlobalGhostMode
+        self.localPeerOverrides = localPeerOverrides
         self.saveDeletedMessages = saveDeletedMessages
         self.saveMessagesHistory = saveMessagesHistory
         self.saveForBots = saveForBots
@@ -528,6 +607,23 @@ public struct MiraSettings: Codable, Equatable {
         return self.ghost["\(peerId.toInt64())"] ?? globalSettings
     }
 
+    public func localPeerOverride(forPeerId peerId: Int64) -> MiraLocalPeerOverride? {
+        return self.localPeerOverrides[String(peerId)]
+    }
+
+    public mutating func setLocalPeerOverride(_ override: MiraLocalPeerOverride, forPeerId peerId: Int64) {
+        let key = String(peerId)
+        if override.isEmpty {
+            self.localPeerOverrides.removeValue(forKey: key)
+        } else {
+            self.localPeerOverrides[key] = override
+        }
+    }
+
+    public mutating func removeLocalPeerOverride(forPeerId peerId: Int64) {
+        self.localPeerOverrides.removeValue(forKey: String(peerId))
+    }
+
     /// Returns the Ghost Mode settings for an account, preserving the previous
     /// global/per-chat behavior when no account override has been configured.
     public func ghostSettings(forAccountPeerId accountPeerId: PeerId?, peerId: EnginePeer.Id? = nil) -> MiraGhostSettings {
@@ -560,6 +656,7 @@ public struct MiraSettings: Codable, Equatable {
         self.ghost = (try? container.decodeIfPresent([String: MiraGhostSettings].self, forKey: "ghost")) ?? [:]
         self.ghostByAccount = (try? container.decodeIfPresent([String: MiraGhostSettings].self, forKey: "ghostByAccount")) ?? [:]
         self.useGlobalGhostMode = try container.decodeIfPresent(Bool.self, forKey: "useGlobalGhostMode") ?? true
+        self.localPeerOverrides = (try? container.decodeIfPresent([String: MiraLocalPeerOverride].self, forKey: "localPeerOverrides")) ?? [:]
         self.saveDeletedMessages = try container.decodeIfPresent(Bool.self, forKey: "saveDeletedMessages") ?? true
         self.saveMessagesHistory = try container.decodeIfPresent(Bool.self, forKey: "saveMessagesHistory") ?? true
         self.saveForBots = try container.decodeIfPresent(Bool.self, forKey: "saveForBots") ?? false
@@ -587,7 +684,7 @@ public struct MiraSettings: Codable, Equatable {
         self.voiceChangerPreset = (0 ... 13).contains(decodedVoiceChangerPreset) ? decodedVoiceChangerPreset : 0
         self.videoMessagesUseBackCamera = try container.decodeIfPresent(Bool.self, forKey: "videoMessagesUseBackCamera") ?? false
         self.showLocalOnline = try container.decodeIfPresent(Bool.self, forKey: "showLocalOnline") ?? true
-        self.showRealLastSeen = try container.decodeIfPresent(Bool.self, forKey: "showRealLastSeen") ?? true
+        self.showRealLastSeen = try container.decodeIfPresent(Bool.self, forKey: "showRealLastSeen") ?? false
         self.localMessageEditEnabled = try container.decodeIfPresent(Bool.self, forKey: "localMessageEditEnabled") ?? true
         self.autoClearClipboard = try container.decodeIfPresent(Bool.self, forKey: "autoClearClipboard") ?? false
         self.hidePhoneNumber = try container.decodeIfPresent(Bool.self, forKey: "hidePhoneNumber") ?? false
@@ -613,6 +710,7 @@ public struct MiraSettings: Codable, Equatable {
         try container.encode(self.ghost, forKey: "ghost")
         try container.encode(self.ghostByAccount, forKey: "ghostByAccount")
         try container.encode(self.useGlobalGhostMode, forKey: "useGlobalGhostMode")
+        try container.encode(self.localPeerOverrides, forKey: "localPeerOverrides")
         try container.encode(self.saveDeletedMessages, forKey: "saveDeletedMessages")
         try container.encode(self.saveMessagesHistory, forKey: "saveMessagesHistory")
         try container.encode(self.saveForBots, forKey: "saveForBots")

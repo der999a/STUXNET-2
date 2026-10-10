@@ -284,7 +284,10 @@ private struct StuxnetAddFakeGiftState: Equatable {
     var isHidden: Bool = false
     var isSaved: Bool = false
     var showInChat: Bool = false
-    var transferStarsText: String = "0"
+    // Telegram's collectible transfer price is 25 Stars. Keep the value
+    // visible in the editor so a newly-created NFT cannot accidentally be
+    // persisted as a free transfer.
+    var transferStarsText: String = "25"
     var isSaving: Bool = false
 }
 
@@ -495,7 +498,9 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         state.isHidden = existingGift.isHidden
         state.isSaved = existingGift.isSaved
         state.showInChat = existingGift.showInChat
-        state.transferStarsText = existingGift.transferStars.map { String($0) } ?? "0"
+        state.transferStarsText = existingGift.isUnique
+            ? String(max(MiraFakeGift.defaultNFTTransferStars, existingGift.transferStars ?? MiraFakeGift.defaultNFTTransferStars))
+            : String(MiraFakeGift.defaultNFTTransferStars)
         initialState = state
     } else {
         initialState = StuxnetAddFakeGiftState()
@@ -630,7 +635,9 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
             isHidden: state.isHidden,
             isSaved: state.isSaved,
             showInChat: state.showInChat,
-            transferStars: max(0, Int64(state.transferStarsText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0)
+            transferStars: state.kind == .regular
+                ? nil
+                : max(MiraFakeGift.defaultNFTTransferStars, Int64(state.transferStarsText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? MiraFakeGift.defaultNFTTransferStars)
         )
         if let senderId = state.selectedSenderId {
             gift.fromPeerId = senderId.toInt64()
@@ -783,8 +790,10 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         entries.append(.hidden(state.isHidden))
         entries.append(.saved(state.isSaved))
         entries.append(.showInChat(state.showInChat))
-        entries.append(.transferStarsInput(state.transferStarsText))
-        entries.append(.footerInfo("The gift is only visible to you, on your own profile, while Fake Gifts are enabled."))
+        if state.kind != .regular {
+            entries.append(.transferStarsInput(state.transferStarsText))
+        }
+        entries.append(.footerInfo("Fake gifts stay local. NFT transfers use Telegram's 25 Stars fee and are recorded in the local Stars history."))
 
         if existingGift != nil {
             entries.append(.deleteGift("Delete Gift"))
