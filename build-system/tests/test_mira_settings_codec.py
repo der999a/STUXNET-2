@@ -45,6 +45,10 @@ public enum EnginePeer { public typealias Id = PeerId }
         extract(read(postbox + "PreferencesEntry.swift"), "public final class PreferencesEntry"),
         read("submodules/TelegramCore/Sources/TelegramEngine/Utils/StringCodingKey.swift"),
         extract(settings, "public struct MiraGhostSettings"),
+        extract(settings, "public enum MiraSocialVideoPlatform"),
+        extract(settings, "public enum MiraSocialVideoQuality"),
+        extract(settings, "public enum MiraSocialVideoDestination"),
+        extract(settings, "public struct MiraSocialVideoSettings"),
         extract(settings, "public struct MiraSettings"),
     ])
     parts = [re.sub(r"^import [^\n]+$", "", part, flags=re.MULTILINE) for part in parts]
