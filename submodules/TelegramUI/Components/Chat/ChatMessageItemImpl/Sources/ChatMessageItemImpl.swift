@@ -317,7 +317,7 @@ public final class ChatMessageItemImpl: ChatMessageItem, CustomStringConvertible
         // indexes; all normal messages retain the history-provided value.
         self.content = {
             switch content {
-            case let .message(message, read, selection, attributes, location):
+            case let .message(message, _, selection, attributes, location):
                 guard message.id.namespace == Namespaces.Message.Local,
                       let fake = context.account.miraMessageHistoryStore.fakeMessage(messageId: message.id) else {
                     return content
