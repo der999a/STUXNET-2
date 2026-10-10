@@ -565,8 +565,13 @@ public final class MiraMessageHistoryStore {
                   MiraMessageHistoryStore.isValidPackedPeerId(record.messagePeerId) else {
                 return false
             }
-            self.fakeCache[index] = record
-            self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: [record], removedIds: nil))
+            // Editing content must not silently reset the separate local
+            // read marker. Read/unread is changed only through
+            // `setFakeMessageRead`, so preserve the current value here.
+            var updatedRecord = record
+            updatedRecord.isRead = self.fakeCache[index].isRead
+            self.fakeCache[index] = updatedRecord
+            self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: [updatedRecord], removedIds: nil))
             self.persistFakeSnapshotLocked()
             self.publishFakeMessagesLocked()
             return true
