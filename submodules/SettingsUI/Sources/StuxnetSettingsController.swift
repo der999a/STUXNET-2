@@ -297,7 +297,7 @@ private func stuxnetManualIntegerController(
 
     let controller = ItemListController(context: context, state: signal)
     dismissImpl = { [weak controller] in
-        (controller?.navigationController as? NavigationController)?.popViewController(animated: true)
+        _ = (controller?.navigationController as? NavigationController)?.popViewController(animated: true)
     }
     return controller
 }
