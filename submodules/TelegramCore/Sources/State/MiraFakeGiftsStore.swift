@@ -768,15 +768,20 @@ extension MiraFakeGiftsStore {
         }
         let entry = self.list().first(where: { $0.stableSavedId == savedId })
         if let entry {
-            if !entry.isUnique, case let .generic(gift)? = entry.giftSnapshot {
-                // Conversion is a local credit. The related gift id makes the
-                // operation idempotent if the UI sends the action twice.
-                _ = account.miraFakeStarsLedger.recordGiftConversion(
-                    id: entry.id,
-                    peerId: account.peerId.toInt64(),
-                    stars: max(0, gift.convertStars),
-                    date: entry.date
-                )
+            // A regular gift can be converted only when its catalog snapshot
+            // contains the authoritative conversion value. Do not remove a
+            // profile item on a partially loaded/legacy entry: doing so would
+            // lose the gift without crediting the local Stars ledger.
+            guard !entry.isUnique,
+                  case let .generic(gift)? = entry.giftSnapshot,
+                  gift.convertStars >= 0,
+                  account.miraFakeStarsLedger.recordGiftConversion(
+                      id: entry.id,
+                      peerId: account.peerId.toInt64(),
+                      stars: gift.convertStars,
+                      date: entry.date
+                  ) else {
+                return
             }
             let _ = self.deleteChatMessageSignal(account: account, entry: entry).start(completed: { [weak self] in
                 self?.remove(id: entry.id)

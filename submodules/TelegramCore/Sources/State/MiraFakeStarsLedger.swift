@@ -184,8 +184,8 @@ public final class MiraFakeStarsLedger {
 
     @discardableResult
     public func credit(_ amount: Int64, kind: MiraFakeStarsLedgerEntryKind = .credit, relatedId: String? = nil, peerId: Int64? = nil, date: Int32 = MiraFakeStarsLedger.currentTimestamp(), note: String? = nil) -> Bool {
-        guard amount > 0 else {
-            return amount == 0
+        guard amount >= 0 else {
+            return false
         }
         return self.apply(amount: amount, kind: kind, relatedId: relatedId, peerId: peerId, date: date, note: note)
     }
@@ -217,7 +217,10 @@ public final class MiraFakeStarsLedger {
     /// so editing/reloading the message remains idempotent.
     @discardableResult
     public func recordFakeStarsMessage(id: String, peerId: Int64, amount: Int64, outgoing: Bool, date: Int32 = MiraFakeStarsLedger.currentTimestamp()) -> Bool {
-        let normalized = max(0, amount)
+        guard amount >= 0 else {
+            return false
+        }
+        let normalized = amount
         if outgoing {
             return self.debit(normalized, kind: .fakeStarsMessage, relatedId: id, peerId: peerId, date: date, note: "Fake Stars message")
         } else {
@@ -230,34 +233,127 @@ public final class MiraFakeStarsLedger {
     /// separate idempotent event.
     @discardableResult
     public func adjustFakeStarsMessage(id: String, peerId: Int64, oldAmount: Int64, newAmount: Int64, outgoing: Bool, date: Int32 = MiraFakeStarsLedger.currentTimestamp()) -> Bool {
+        guard oldAmount >= 0 && newAmount >= 0 else {
+            return false
+        }
         let oldValue = max(0, oldAmount)
         let newValue = max(0, newAmount)
         guard oldValue != newValue else {
             return true
         }
-        let delta = newValue - oldValue
-        let relatedId = "\(id):edit:\(date):\(newValue)"
-        if outgoing {
-            if delta > 0 {
-                return self.debit(delta, kind: .fakeStarsMessage, relatedId: relatedId, peerId: peerId, date: date, note: "Fake Stars message edit")
-            } else {
-                return self.credit(-delta, kind: .fakeStarsMessage, relatedId: relatedId, peerId: peerId, date: date, note: "Fake Stars message edit refund")
+        return self.queue.sync {
+            self.loadIfNeeded()
+            let removalId = "\(id):delete"
+            guard !self.hasEntryLocked(kind: .fakeStarsMessage, relatedId: removalId) else {
+                return false
             }
-        } else if delta > 0 {
-            return self.credit(delta, kind: .fakeStarsMessage, relatedId: relatedId, peerId: peerId, date: date, note: "Fake Stars message edit")
-        } else {
-            return self.debit(-delta, kind: .fakeStarsMessage, relatedId: relatedId, peerId: peerId, date: date, note: "Fake Stars message edit reversal")
+
+            var currentEffect: Int64 = 0
+            for entry in self.entriesCache where entry.kind == .fakeStarsMessage && (entry.relatedId == id || entry.relatedId?.hasPrefix("\(id):edit:") == true) {
+                if entry.delta > 0 && currentEffect > Int64.max - entry.delta {
+                    return false
+                } else if entry.delta < 0 && currentEffect < Int64.min - entry.delta {
+                    return false
+                }
+                currentEffect += entry.delta
+            }
+
+            let oldEffect = outgoing ? -oldValue : oldValue
+            let newEffect = outgoing ? -newValue : newValue
+            if currentEffect == newEffect {
+                return true
+            }
+            guard currentEffect == oldEffect else {
+                return false
+            }
+            let deltaResult = newEffect.subtractingReportingOverflow(currentEffect)
+            guard !deltaResult.overflow else {
+                return false
+            }
+            let delta = deltaResult.partialValue
+            let nextBalance: Int64
+            if delta < 0 {
+                guard delta != Int64.min, self.balanceCache >= -delta else {
+                    return false
+                }
+                nextBalance = self.balanceCache + delta
+            } else {
+                guard self.balanceCache <= Int64.max - delta else {
+                    return false
+                }
+                nextBalance = self.balanceCache + delta
+            }
+            self.balanceCache = nextBalance
+            self.entriesCache.append(MiraFakeStarsLedgerEntry(date: date, delta: delta, balance: nextBalance, kind: .fakeStarsMessage, relatedId: "\(id):edit:\(UUID().uuidString)", peerId: peerId, note: "Fake Stars message edit"))
+            self.persistLocked()
+            self.publishLocked()
+            return true
+        }
+    }
+
+    /// Reverses the net local balance effect of a deleted fake Stars message.
+    /// A compensating entry keeps transaction history auditable and makes a
+    /// repeated delete harmless, including after restart.
+    @discardableResult
+    public func removeFakeStarsMessage(id: String, peerId: Int64, date: Int32 = MiraFakeStarsLedger.currentTimestamp()) -> Bool {
+        return self.queue.sync {
+            self.loadIfNeeded()
+            let removalId = "\(id):delete"
+            if self.hasEntryLocked(kind: .fakeStarsMessage, relatedId: removalId) {
+                return true
+            }
+            let netDelta = self.entriesCache.reduce(Int64(0)) { partial, entry in
+                guard entry.kind == .fakeStarsMessage,
+                      entry.relatedId == id || entry.relatedId?.hasPrefix("\(id):edit:") == true else {
+                    return partial
+                }
+                if entry.delta > 0 && partial > Int64.max - entry.delta {
+                    return Int64.max
+                } else if entry.delta < 0 && partial < Int64.min - entry.delta {
+                    return Int64.min
+                } else {
+                    return partial + entry.delta
+                }
+            }
+            guard self.entriesCache.contains(where: { $0.kind == .fakeStarsMessage && ($0.relatedId == id || $0.relatedId?.hasPrefix("\(id):edit:") == true) }) else {
+                return false
+            }
+            let reversal: Int64
+            if netDelta > 0 {
+                reversal = -min(netDelta, self.balanceCache)
+            } else if netDelta < 0 {
+                reversal = netDelta == Int64.min ? Int64.max : -netDelta
+            } else {
+                reversal = 0
+            }
+            let nextBalance: Int64
+            if reversal > 0 && self.balanceCache > Int64.max - reversal {
+                nextBalance = Int64.max
+            } else {
+                nextBalance = max(0, self.balanceCache + reversal)
+            }
+            self.balanceCache = nextBalance
+            self.entriesCache.append(MiraFakeStarsLedgerEntry(date: date, delta: reversal, balance: nextBalance, kind: .fakeStarsMessage, relatedId: removalId, peerId: peerId, note: "Deleted fake Stars message"))
+            self.persistLocked()
+            self.publishLocked()
+            return true
         }
     }
 
     @discardableResult
     public func recordGiftTransfer(id: String, peerId: Int64, fee: Int64, date: Int32 = MiraFakeStarsLedger.currentTimestamp()) -> Bool {
-        return self.debit(max(0, fee), kind: .fakeGiftTransfer, relatedId: id, peerId: peerId, date: date, note: "Fake gift transfer")
+        guard fee >= 0 else {
+            return false
+        }
+        return self.debit(fee, kind: .fakeGiftTransfer, relatedId: id, peerId: peerId, date: date, note: "Fake gift transfer")
     }
 
     @discardableResult
     public func recordGiftConversion(id: String, peerId: Int64, stars: Int64, date: Int32 = MiraFakeStarsLedger.currentTimestamp()) -> Bool {
-        return self.credit(max(0, stars), kind: .fakeGiftConversion, relatedId: id, peerId: peerId, date: date, note: "Fake gift conversion")
+        guard stars >= 0 else {
+            return false
+        }
+        return self.credit(stars, kind: .fakeGiftConversion, relatedId: id, peerId: peerId, date: date, note: "Fake gift conversion")
     }
 
     public func hasEntry(kind: MiraFakeStarsLedgerEntryKind, relatedId: String?) -> Bool {
@@ -268,6 +364,9 @@ public final class MiraFakeStarsLedger {
     }
 
     private func hasEntryLocked(kind: MiraFakeStarsLedgerEntryKind, relatedId: String?) -> Bool {
+        guard let relatedId else {
+            return false
+        }
         return self.entriesCache.contains { $0.kind == kind && $0.relatedId == relatedId }
     }
 
@@ -288,7 +387,7 @@ public final class MiraFakeStarsLedger {
     }
 
     public func clear() {
-        self.queue.async {
+        self.queue.sync {
             self.didLoad = true
             self.balanceCache = 0
             self.entriesCache.removeAll()
