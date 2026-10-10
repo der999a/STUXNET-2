@@ -51,6 +51,18 @@ public struct MiraFakeGift: Codable, Equatable {
     // so the profile shelf renders without any extra network requests.
     public var giftSnapshot: StarGift?
 
+    /// The persisted kind is authoritative for fake gifts.  The snapshot can
+    /// be missing while a catalog item is being resolved, so callers should
+    /// use this instead of inferring NFT state from optional fields.
+    public var isUnique: Bool {
+        switch self.kind {
+        case .regular:
+            return false
+        case .uniqueBySlug, .uniqueById:
+            return true
+        }
+    }
+
     public init(
         id: String = UUID().uuidString,
         kind: Kind,
@@ -470,6 +482,16 @@ extension MiraFakeGiftsStore {
                 case .generic:
                     reference = .peer(peerId: account.peerId, id: entry.stableSavedId)
                 }
+                // Keep the server-provided values for ordinary gifts.  These
+                // values drive Telegram's "keep or convert" copy and the
+                // conversion action; leaving them nil made local regular
+                // gifts look like NFTs and silently removed that UI.
+                let genericGift: StarGift.Gift? = {
+                    if case let .generic(genericGift) = projectedGift {
+                        return genericGift
+                    }
+                    return nil
+                }()
                 return ProfileGiftsContext.State.StarGift(
                     gift: projectedGift,
                     reference: reference,
@@ -480,10 +502,10 @@ extension MiraFakeGiftsStore {
                     nameHidden: false,
                     savedToProfile: !entry.isHidden || entry.isSaved,
                     pinnedToTop: entry.isSaved,
-                    convertStars: nil,
-                    canUpgrade: false,
+                    convertStars: genericGift.flatMap { $0.convertStars > 0 ? $0.convertStars : nil },
+                    canUpgrade: genericGift?.upgradeStars != nil,
                     canExportDate: nil,
-                    upgradeStars: nil,
+                    upgradeStars: genericGift?.upgradeStars,
                     transferStars: nil,
                     canTransferDate: nil,
                     canResaleDate: nil,
@@ -491,7 +513,12 @@ extension MiraFakeGiftsStore {
                     prepaidUpgradeHash: nil,
                     upgradeSeparate: false,
                     dropOriginalDetailsStars: nil,
-                    number: nil,
+                    number: {
+                        if case let .unique(uniqueGift) = projectedGift {
+                            return uniqueGift.number
+                        }
+                        return nil
+                    }(),
                     isRefunded: false,
                     canCraftAt: nil
                 )
@@ -573,17 +600,28 @@ extension MiraFakeGiftsStore {
                 let action: TelegramMediaActionType
                 switch resolved.gift {
                 case .generic:
+                    let genericGift: StarGift.Gift? = {
+                        if case let .generic(value) = resolved.gift {
+                            return value
+                        }
+                        return nil
+                    }()
                     action = .starGift(
                         gift: resolved.gift,
-                        convertStars: nil,
+                        // Preserve the catalog's conversion value in the
+                        // action message as well as in the profile projection.
+                        // GiftViewScreen reads this field when opened from a
+                        // chat, so fake regular gifts behave like Telegram
+                        // gifts in both entry points.
+                        convertStars: genericGift.flatMap { $0.convertStars > 0 ? $0.convertStars : nil },
                         text: entry.caption,
                         entities: nil,
                         nameHidden: false,
                         savedToProfile: !entry.isHidden || entry.isSaved,
                         converted: false,
                         upgraded: false,
-                        canUpgrade: false,
-                        upgradeStars: nil,
+                        canUpgrade: genericGift?.upgradeStars != nil,
+                        upgradeStars: genericGift?.upgradeStars,
                         isRefunded: false,
                         isPrepaidUpgrade: false,
                         upgradeMessageId: nil,

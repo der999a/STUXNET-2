@@ -105,17 +105,12 @@ private final class GiftViewSheetContent: CombinedComponent {
         var peerMap: [EnginePeer.Id: EnginePeer] = [:]
         var starGiftsMap: [Int64: StarGift.Gift] = [:]
 
-        /// Fake gifts are local profile projections. Their sender row should
-        /// open the sender's profile, while real Telegram gifts keep their
-        /// normal chat navigation.
+        /// Sender rows always follow Telegram's chat navigation.  A profile
+        /// is opened only by an explicit owner/profile element; keeping this
+        /// decision independent of the local reference prevents fake gifts
+        /// from changing the meaning of the sender row.
         var opensFakeGiftSenderProfile: Bool {
-            guard let arguments = self.subject.arguments,
-                  let reference = arguments.reference,
-                  case let .peer(peerId, savedId) = reference,
-                  peerId == self.context.account.peerId else {
-                return false
-            }
-            return MiraFakeGift.isLocalSavedId(savedId)
+            return false
         }
         
         var cachedStarImage: (UIImage, PresentationTheme)?
@@ -5469,40 +5464,21 @@ final class GiftViewSheetComponent: CombinedComponent {
                                     guard let peer, let navigationController else {
                                         return
                                     }
-                                    let isLocalFakeGift: Bool = {
-                                        guard let reference = arguments.reference,
-                                              case let .peer(referencePeerId, savedId) = reference else {
-                                            return false
-                                        }
-                                        return referencePeerId == context.account.peerId && MiraFakeGift.isLocalSavedId(savedId)
-                                    }()
-                                    if isLocalFakeGift, let profileController = context.sharedContext.makePeerInfoController(
+                                    context.sharedContext.navigateToChatController(NavigateToChatControllerParams(
+                                        navigationController: navigationController,
+                                        chatController: nil,
                                         context: context,
-                                        updatedPresentationData: nil,
-                                        peer: peer,
-                                        mode: .gifts,
-                                        avatarInitiallyExpanded: false,
-                                        fromChat: false,
-                                        requestsContext: nil
-                                    ) {
-                                        navigationController.pushViewController(profileController, animated: true)
-                                    } else {
-                                        context.sharedContext.navigateToChatController(NavigateToChatControllerParams(
-                                            navigationController: navigationController,
-                                            chatController: nil,
-                                            context: context,
-                                            chatLocation: .peer(peer),
-                                            subject: nil,
-                                            botStart: nil,
-                                            updateTextInputState: nil,
-                                            keepStack: .always,
-                                            useExisting: true,
-                                            purposefulAction: nil,
-                                            scrollToEndIfExists: false,
-                                            activateMessageSearch: nil,
-                                            animated: true
-                                        ))
-                                    }
+                                        chatLocation: .peer(peer),
+                                        subject: nil,
+                                        botStart: nil,
+                                        updateTextInputState: nil,
+                                        keepStack: .always,
+                                        useExisting: true,
+                                        purposefulAction: nil,
+                                        scrollToEndIfExists: false,
+                                        activateMessageSearch: nil,
+                                        animated: true
+                                    ))
                                 })
                             }
                         })
