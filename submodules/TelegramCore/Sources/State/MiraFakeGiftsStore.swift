@@ -709,7 +709,7 @@ extension MiraFakeGiftsStore {
                     entry.chatMessagePeerId = messageId.peerId.toInt64()
                     entry.chatMessageId = messageId.id
                 }
-                if chatPeerId.namespace == Namespaces.Peer.CloudUser,
+                if [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(chatPeerId.namespace),
                    case .notIncluded = transaction.getPeerChatListInclusion(chatPeerId) {
                     transaction.updatePeerChatListInclusion(chatPeerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
                 }
