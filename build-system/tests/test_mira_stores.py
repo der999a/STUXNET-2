@@ -185,6 +185,7 @@ require(unloadedGiftStore.list().isEmpty, "gift clear before initial load")
 let record = FakeMessageRecord(id: "m1", messagePeerId: userId(42).toInt64(), text: "hello", date: 1, outgoing: false)
 let media = FakeMessageMedia(kind: .video, resource: "local://clip.mp4", duration: -4, width: -1, stars: -2)
 let mediaRecord = FakeMessageRecord(id: "media", messagePeerId: userId(42).toInt64(), text: "caption", date: 2, outgoing: true, kind: .video, media: media)
+require(!record.isRead && mediaRecord.isRead, "fake message read defaults follow direction")
 require(mediaRecord.kind == .video && mediaRecord.media?.duration == 0 && mediaRecord.media?.width == 0 && mediaRecord.media?.stars == 0, "media metadata is normalized")
 let decodedMediaRecord = try! JSONDecoder().decode(FakeMessageRecord.self, from: JSONEncoder().encode(mediaRecord))
 require(decodedMediaRecord == mediaRecord, "media metadata persists")
@@ -195,6 +196,8 @@ let historySubscription = history.fakeMessagesChanges.start(next: { value in _ =
 defer { historySubscription.dispose() }
 history.addFakeMessage(record)
 waitUntil { history.fakeMessages(in: userId(42)).count == 1 && lastHistoryId() == "m1" }
+require(history.setFakeMessageRead(id: "m1", isRead: true), "fake message read marker updates")
+waitUntil { history.fakeMessage(id: "m1")?.isRead == true }
 history.addFakeMessage(record)
 require(history.fakeMessages(in: userId(42)).count == 1, "duplicate fake id is ignored")
 var editedRecord = record
@@ -206,6 +209,7 @@ var invalidEdit = editedRecord
 invalidEdit.messageNamespace = 99
 require(!history.updateFakeMessage(invalidEdit), "invalid fake message edit is rejected")
 require(MiraMessageHistoryStore(basePath: root.path).fakeMessage(id: "m1")?.text == "edited", "fake message edit persists")
+require(MiraMessageHistoryStore(basePath: root.path).fakeMessage(id: "m1")?.isRead == true, "fake message read marker persists")
 let bulk = (0..<1200).map { FakeMessageRecord(id: "bulk-\($0)", messagePeerId: userId(42).toInt64(), text: "row \($0)", date: Int32($0), outgoing: false) }
 history.addFakeMessages(bulk)
 require(history.fakeMessages(in: userId(42)).count == 1201, "bulk insertion preserves every record")
