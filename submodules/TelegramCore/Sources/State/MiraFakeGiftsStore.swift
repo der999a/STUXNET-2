@@ -506,7 +506,10 @@ extension MiraFakeGiftsStore {
                     canUpgrade: genericGift?.upgradeStars != nil,
                     canExportDate: nil,
                     upgradeStars: genericGift?.upgradeStars,
-                    transferStars: nil,
+                    // Local NFTs can be transferred through the same UI as a
+                    // Telegram NFT. A zero fee keeps this operation local and
+                    // prevents the synthetic reference from reaching the API.
+                    transferStars: entry.isUnique ? 0 : nil,
                     canTransferDate: nil,
                     canResaleDate: nil,
                     collectionIds: nil,
@@ -642,7 +645,7 @@ extension MiraFakeGiftsStore {
                         isTransferred: false,
                         savedToProfile: !entry.isHidden || entry.isSaved,
                         canExportDate: nil,
-                        transferStars: nil,
+                        transferStars: entry.isUnique ? 0 : nil,
                         isRefunded: false,
                         isPrepaidUpgrade: false,
                         peerId: account.peerId,
@@ -681,6 +684,21 @@ extension MiraFakeGiftsStore {
                     attributes: [],
                     media: [TelegramMediaAction(action: action)]
                 )
+                // If an earlier process was interrupted after adding the
+                // Postbox row but before persisting its ids, the cached
+                // reference is empty and a retry would otherwise leave two
+                // identical gift actions in the chat. Remove only our local
+                // stable-id projection before inserting the replacement.
+                var staleMessageIds: [MessageId] = []
+                transaction.withAllMessages(peerId: chatPeerId, namespace: Namespaces.Message.Local) { existingMessage in
+                    if existingMessage.globallyUniqueId == entry.stableSavedId {
+                        staleMessageIds.append(existingMessage.id)
+                    }
+                    return true
+                }
+                if !staleMessageIds.isEmpty {
+                    transaction.deleteMessages(staleMessageIds, forEachMedia: nil)
+                }
                 let mapping = transaction.addMessages([message], location: .Random)
                 if let messageId = mapping[entry.stableSavedId] {
                     entry.chatMessagePeerId = messageId.peerId.toInt64()
@@ -729,6 +747,40 @@ extension MiraFakeGiftsStore {
                 self?.saveLocked()
                 self?.publishLocked()
             }
+        }
+    }
+
+    /// Moves a local fake NFT into the recipient's local chat. The operation is
+    /// deliberately account-local: no synthetic reference is sent to Telegram
+    /// and the original profile entry is removed only after its chat projection
+    /// has been deleted.
+    public func transferLocalReference(account: Account, reference: StarGiftReference, recipientPeerId: PeerId) -> Signal<Never, TransferStarGiftError> {
+        guard case let .peer(peerId, savedId) = reference,
+              peerId == account.peerId,
+              MiraFakeGift.isLocalSavedId(savedId),
+              let source = self.list().first(where: { $0.stableSavedId == savedId }),
+              source.isUnique else {
+            return .fail(.generic)
+        }
+        let remove = self.deleteChatMessageSignal(account: account, entry: source)
+        return remove
+        |> mapToSignal { [weak self] _ -> Signal<Never, TransferStarGiftError> in
+            guard let self else {
+                return .complete()
+            }
+            self.remove(id: source.id)
+            var transferred = source
+            transferred.id = UUID().uuidString
+            transferred.fromPeerId = account.peerId.toInt64()
+            transferred.fromPeerIdIsPacked = true
+            transferred.fromName = nil
+            transferred.date = Int32(clamping: Int64(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970))
+            transferred.chatMessagePeerId = nil
+            transferred.chatMessageId = nil
+            transferred.showInChat = true
+            return self.insertChatMessage(account: account, entry: transferred)
+            |> ignoreValues
+            |> mapError { _ in .generic }
         }
     }
 }

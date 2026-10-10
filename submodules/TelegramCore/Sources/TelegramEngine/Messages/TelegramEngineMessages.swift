@@ -269,6 +269,17 @@ public extension TelegramEngine {
                     records.append(record)
                     storeMessages.append(message)
                 }
+                let stableIds = Set(records.map { $0.stableUniqueId })
+                var staleMessageIds: [MessageId] = []
+                transaction.withAllMessages(peerId: peerId, namespace: Namespaces.Message.Local) { existingMessage in
+                    if let globallyUniqueId = existingMessage.globallyUniqueId, stableIds.contains(globallyUniqueId) {
+                        staleMessageIds.append(existingMessage.id)
+                    }
+                    return true
+                }
+                if !staleMessageIds.isEmpty {
+                    transaction.deleteMessages(staleMessageIds, forEachMedia: nil)
+                }
                 let mapping = transaction.addMessages(storeMessages, location: .Random)
                 for index in records.indices {
                     if let messageId = mapping[records[index].stableUniqueId] {
@@ -325,6 +336,17 @@ public extension TelegramEngine {
                         media: []
                     ))
                     records.append(record)
+                }
+                let stableIds = Set(records.map { $0.stableUniqueId })
+                var staleMessageIds: [MessageId] = []
+                transaction.withAllMessages(peerId: peerId, namespace: Namespaces.Message.Local) { existingMessage in
+                    if let globallyUniqueId = existingMessage.globallyUniqueId, stableIds.contains(globallyUniqueId) {
+                        staleMessageIds.append(existingMessage.id)
+                    }
+                    return true
+                }
+                if !staleMessageIds.isEmpty {
+                    transaction.deleteMessages(staleMessageIds, forEachMedia: nil)
                 }
                 let mapping = transaction.addMessages(storeMessages, location: .Random)
                 for index in records.indices {

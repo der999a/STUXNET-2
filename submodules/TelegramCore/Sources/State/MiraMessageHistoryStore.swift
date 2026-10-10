@@ -372,6 +372,17 @@ public final class MiraMessageHistoryStore {
         }
     }
 
+    /// The journal is the durable event log, while this compact snapshot is a
+    /// fast recovery point. Keeping both makes a partially written journal
+    /// harmless after a force quit and avoids replaying an unbounded history
+    /// every time the chat list is opened.
+    private func persistFakeSnapshotLocked() {
+        guard let data = try? JSONEncoder().encode(self.fakeCache) else {
+            return
+        }
+        try? data.write(to: URL(fileURLWithPath: self.fakeMessagesFilePath), options: [.atomic])
+    }
+
     public func fakeMessages(in peerId: PeerId) -> [FakeMessageRecord] {
         return self.queue.sync {
             self.loadFakesIfNeeded()
@@ -430,6 +441,7 @@ public final class MiraMessageHistoryStore {
                 inserted.append(record)
             }
             self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: inserted, removedIds: nil))
+            self.persistFakeSnapshotLocked()
             self.publishFakeMessagesLocked()
         }
     }
@@ -439,6 +451,7 @@ public final class MiraMessageHistoryStore {
             self.loadFakesIfNeeded()
             self.fakeCache.removeAll(where: { $0.id == id })
             self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: nil, removedIds: [id]))
+            self.persistFakeSnapshotLocked()
             self.publishFakeMessagesLocked()
         }
     }
@@ -452,6 +465,7 @@ public final class MiraMessageHistoryStore {
             let idSet = Set(ids)
             self.fakeCache.removeAll(where: { idSet.contains($0.id) })
             self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: nil, removedIds: ids))
+            self.persistFakeSnapshotLocked()
             self.publishFakeMessagesLocked()
         }
     }
