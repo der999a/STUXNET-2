@@ -9019,9 +9019,30 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
             if !isScheduledMessages {
                 let socialVideoSettings = self.context.sharedContext.immediateMiraSettings.socialVideoSettings
                 if socialVideoSettings.enabled {
+                    var socialVideoLinks: [MiraSocialVideoLink] = []
                     for message in messages {
                         if case let .message(text, _, _, _, _, _, _, _, _, _) = message {
-                            MiraSocialVideoDownloader.enqueue(text: text, settings: socialVideoSettings)
+                            socialVideoLinks.append(contentsOf: MiraSocialVideoDownloader.links(in: text, settings: socialVideoSettings))
+                        }
+                    }
+                    if !socialVideoLinks.isEmpty {
+                        if socialVideoSettings.confirmBeforeDownload {
+                            let platformNames = Array(Set(socialVideoLinks.map { $0.platform.title })).sorted().joined(separator: ", ")
+                            let alert = textAlertController(
+                                context: self.context,
+                                updatedPresentationData: self.updatedPresentationData,
+                                title: "Download social video?",
+                                text: "A local copy will be saved from \(platformNames). The Telegram message will still be sent normally.",
+                                actions: [
+                                    TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {}),
+                                    TextAlertAction(type: .defaultAction, title: "Download", action: {
+                                        MiraSocialVideoDownloader.enqueue(links: socialVideoLinks, settings: socialVideoSettings)
+                                    })
+                                ]
+                            )
+                            self.present(alert, in: .window(.root))
+                        } else {
+                            MiraSocialVideoDownloader.enqueue(links: socialVideoLinks, settings: socialVideoSettings)
                         }
                     }
                 }

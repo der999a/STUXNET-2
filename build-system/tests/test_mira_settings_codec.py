@@ -49,6 +49,8 @@ public enum EnginePeer { public typealias Id = PeerId }
         extract(settings, "public enum MiraSocialVideoQuality"),
         extract(settings, "public enum MiraSocialVideoDestination"),
         extract(settings, "public struct MiraSocialVideoSettings"),
+        extract(settings, "public struct MiraSocialVideoLink"),
+        extract(settings, "public enum MiraSocialVideoLinkParser"),
         extract(settings, "public struct MiraSettings"),
     ])
     parts = [re.sub(r"^import [^\n]+$", "", part, flags=re.MULTILINE) for part in parts]
@@ -86,9 +88,19 @@ configured.fakeRatingLevel = 1234
 configured.voiceChangerPreset = 13
 configured.interfaceFont = 3
 configured.avatarCornerStyle = 2
+configured.socialVideoSettings.enabled = true
+configured.socialVideoSettings.platforms = MiraSocialVideoSettings.allPlatforms
+configured.socialVideoSettings.wifiOnly = false
+configured.socialVideoSettings.quality = .p1080
+configured.socialVideoSettings.confirmBeforeDownload = false
+configured.socialVideoSettings.destination = .photos
 configured.deletedMark = "🧹 удалено"
 configured.editedMark = "изменено"
 roundTrip(configured)
+check(MiraSocialVideoLinkParser.parse("https://youtube.com/shorts/abc")?.platform == .youtube, "YouTube Shorts parser")
+check(MiraSocialVideoLinkParser.parse("https://www.instagram.com/share/reel/abc")?.platform == .instagram, "Instagram share parser")
+check(MiraSocialVideoLinkParser.parse("https://vm.tiktok.com/abc")?.platform == .tiktok, "TikTok share parser")
+check(MiraSocialVideoLinkParser.parse("https://example.com/video/abc") == nil, "unsupported host rejected")
 let encoder = PostboxEncoder()
 encoder.encodeString("text", forKey: "first")
 encoder.encodeInt64(42, forKey: "second")

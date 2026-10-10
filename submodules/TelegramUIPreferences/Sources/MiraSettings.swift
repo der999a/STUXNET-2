@@ -292,7 +292,7 @@ public enum MiraSocialVideoLinkParser {
         let path = components.path.lowercased()
         let platform: MiraSocialVideoPlatform?
         switch normalizedHost {
-        case "youtube.com", "youtu.be":
+        case "youtube.com", "m.youtube.com", "youtu.be":
             if normalizedHost == "youtu.be" {
                 platform = path.count > 1 ? .youtube : nil
             } else {
@@ -300,9 +300,11 @@ public enum MiraSocialVideoLinkParser {
                 platform = supportedPath ? .youtube : nil
             }
         case "instagram.com":
-            platform = (path.hasPrefix("/reel/") || path.hasPrefix("/p/") || path.hasPrefix("/tv/")) ? .instagram : nil
-        case "tiktok.com":
-            platform = path.contains("/video/") ? .tiktok : nil
+            platform = (path.hasPrefix("/reel/") || path.hasPrefix("/share/reel/") || path.hasPrefix("/p/") || path.hasPrefix("/tv/")) ? .instagram : nil
+        case "tiktok.com", "m.tiktok.com", "vm.tiktok.com", "vt.tiktok.com":
+            // vm./vt. hosts are TikTok's share-link redirectors and do not
+            // include `/video/` until the redirect is followed.
+            platform = normalizedHost == "tiktok.com" || normalizedHost == "m.tiktok.com" ? (path.contains("/video/") ? .tiktok : nil) : (path.count > 1 ? .tiktok : nil)
         case "twitter.com", "x.com":
             platform = path.contains("/status/") ? .twitter : nil
         case "vk.com":
