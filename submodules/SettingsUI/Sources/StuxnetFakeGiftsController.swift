@@ -495,7 +495,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         state.isHidden = existingGift.isHidden
         state.isSaved = existingGift.isSaved
         state.showInChat = existingGift.showInChat
-        state.transferStarsText = existingGift.transferStars.map(String.init) ?? "0"
+        state.transferStarsText = existingGift.transferStars.map { String($0) } ?? "0"
         initialState = state
     } else {
         initialState = StuxnetAddFakeGiftState()
