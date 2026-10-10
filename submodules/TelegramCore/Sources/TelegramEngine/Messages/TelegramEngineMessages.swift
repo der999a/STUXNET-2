@@ -65,15 +65,25 @@ private func miraFakeMessageMedia(record: FakeMessageRecord) -> [Media] {
     let fileSize = descriptor.fileSize ?? discoveredSize
     let randomId = record.stableUniqueId
     let resource = LocalFileReferenceMediaResource(localFilePath: path, randomId: randomId, size: fileSize)
+    if descriptor.kind == .photo {
+        let dimensions = PixelDimensions(width: max(1, descriptor.width ?? 0), height: max(1, descriptor.height ?? 0))
+        let image = TelegramMediaImage(
+            imageId: MediaId(namespace: Namespaces.Media.LocalImage, id: randomId),
+            representations: [
+                TelegramMediaImageRepresentation(dimensions: dimensions, resource: resource, progressiveSizes: [], immediateThumbnailData: nil)
+            ],
+            immediateThumbnailData: nil,
+            reference: nil,
+            partialReference: nil,
+            flags: TelegramMediaImageFlags(rawValue: 0)
+        )
+        return [image]
+    }
     var attributes: [TelegramMediaFileAttribute] = []
     if let fileName = descriptor.fileName, !fileName.isEmpty {
         attributes.append(.FileName(fileName: fileName))
     }
     switch descriptor.kind {
-    case .photo:
-        let width = max(1, descriptor.width ?? 0)
-        let height = max(1, descriptor.height ?? 0)
-        attributes.append(.ImageSize(size: PixelDimensions(width: width, height: height)))
     case .video:
         let width = max(1, descriptor.width ?? 0)
         let height = max(1, descriptor.height ?? 0)
