@@ -40,6 +40,78 @@ public struct LocalOverrideRecord: Codable, Equatable {
     }
 }
 
+/// A local-only content descriptor for a fake message.  It deliberately stores
+/// metadata rather than a Telegram media object: fake content must never be
+/// uploaded or handed to the network layer.  The chat renderer can use this
+/// descriptor to choose a Telegram-like local presentation while Postbox keeps
+/// the message itself stable.
+public enum FakeMessageKind: String, Codable, Equatable {
+    case text
+    case photo
+    case video
+    case file
+    case audio
+    case voice
+    case sticker
+    case service
+    case stars
+}
+
+public struct FakeMessageMedia: Codable, Equatable {
+    public var kind: FakeMessageKind
+    public var resource: String?
+    public var fileName: String?
+    public var mimeType: String?
+    public var duration: Int32?
+    public var width: Int32?
+    public var height: Int32?
+    public var fileSize: Int64?
+    public var stars: Int64?
+    public var starCount: Int32?
+
+    public init(kind: FakeMessageKind,
+                resource: String? = nil,
+                fileName: String? = nil,
+                mimeType: String? = nil,
+                duration: Int32? = nil,
+                width: Int32? = nil,
+                height: Int32? = nil,
+                fileSize: Int64? = nil,
+                stars: Int64? = nil,
+                starCount: Int32? = nil) {
+        self.kind = kind
+        self.resource = resource
+        self.fileName = fileName
+        self.mimeType = mimeType
+        self.duration = duration
+        self.width = width
+        self.height = height
+        self.fileSize = fileSize
+        self.stars = stars
+        self.starCount = starCount
+    }
+
+    /// Normalizes user-entered metadata before it reaches durable storage.
+    /// Negative dimensions, durations, sizes and Star counts are meaningless
+    /// and otherwise make downstream layout code fragile.
+    public var normalized: FakeMessageMedia {
+        var value = self
+        value.resource = value.resource?.trimmingCharacters(in: .whitespacesAndNewlines)
+        value.fileName = value.fileName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        value.mimeType = value.mimeType?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.resource?.isEmpty == true { value.resource = nil }
+        if value.fileName?.isEmpty == true { value.fileName = nil }
+        if value.mimeType?.isEmpty == true { value.mimeType = nil }
+        if let duration = value.duration { value.duration = max(0, duration) }
+        if let width = value.width { value.width = max(0, width) }
+        if let height = value.height { value.height = max(0, height) }
+        if let fileSize = value.fileSize { value.fileSize = max(0, fileSize) }
+        if let stars = value.stars { value.stars = max(0, stars) }
+        if let starCount = value.starCount { value.starCount = max(0, starCount) }
+        return value
+    }
+}
+
 public struct FakeMessageRecord: Codable, Equatable {
     public var id: String
     public var messagePeerId: Int64
@@ -51,8 +123,10 @@ public struct FakeMessageRecord: Codable, Equatable {
     public var outgoing: Bool
     public var authorPeerId: Int64?
     public var authorName: String?
+    public var kind: FakeMessageKind
+    public var media: FakeMessageMedia?
 
-    public init(id: String = UUID().uuidString, messagePeerId: Int64, messageNamespace: Int32 = Namespaces.Message.Local, messageId: Int32 = 0, text: String, entities: [MessageTextEntity] = [], date: Int32, outgoing: Bool, authorPeerId: Int64? = nil, authorName: String? = nil) {
+    public init(id: String = UUID().uuidString, messagePeerId: Int64, messageNamespace: Int32 = Namespaces.Message.Local, messageId: Int32 = 0, text: String, entities: [MessageTextEntity] = [], date: Int32, outgoing: Bool, authorPeerId: Int64? = nil, authorName: String? = nil, kind: FakeMessageKind = .text, media: FakeMessageMedia? = nil) {
         self.id = id
         self.messagePeerId = messagePeerId
         self.messageNamespace = messageNamespace
@@ -63,6 +137,28 @@ public struct FakeMessageRecord: Codable, Equatable {
         self.outgoing = outgoing
         self.authorPeerId = authorPeerId
         self.authorName = authorName
+        self.kind = kind
+        self.media = media?.normalized
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, messagePeerId, messageNamespace, messageId, text, entities, date, outgoing, authorPeerId, authorName, kind, media
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.messagePeerId = try container.decode(Int64.self, forKey: .messagePeerId)
+        self.messageNamespace = try container.decode(Int32.self, forKey: .messageNamespace)
+        self.messageId = try container.decode(Int32.self, forKey: .messageId)
+        self.text = try container.decode(String.self, forKey: .text)
+        self.entities = try container.decodeIfPresent([MessageTextEntity].self, forKey: .entities) ?? []
+        self.date = try container.decode(Int32.self, forKey: .date)
+        self.outgoing = try container.decode(Bool.self, forKey: .outgoing)
+        self.authorPeerId = try container.decodeIfPresent(Int64.self, forKey: .authorPeerId)
+        self.authorName = try container.decodeIfPresent(String.self, forKey: .authorName)
+        self.kind = try container.decodeIfPresent(FakeMessageKind.self, forKey: .kind) ?? .text
+        self.media = try container.decodeIfPresent(FakeMessageMedia.self, forKey: .media)?.normalized
     }
 
     // Deterministic, collision-safe globallyUniqueId for insertion (Swift's hashValue is randomized per launch).
@@ -443,6 +539,28 @@ public final class MiraMessageHistoryStore {
             self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: inserted, removedIds: nil))
             self.persistFakeSnapshotLocked()
             self.publishFakeMessagesLocked()
+        }
+    }
+
+    /// Replaces the editable fields of an existing local message while keeping
+    /// its stable id and Postbox identity intact. This is used by the fake
+    /// chat editor; it never touches cloud messages.
+    @discardableResult
+    public func updateFakeMessage(_ record: FakeMessageRecord) -> Bool {
+        return self.queue.sync {
+            self.loadFakesIfNeeded()
+            guard let index = self.fakeCache.firstIndex(where: { $0.id == record.id }) else {
+                return false
+            }
+            guard record.messageNamespace == Namespaces.Message.Local,
+                  MiraMessageHistoryStore.isValidPackedPeerId(record.messagePeerId) else {
+                return false
+            }
+            self.fakeCache[index] = record
+            self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: [record], removedIds: nil))
+            self.persistFakeSnapshotLocked()
+            self.publishFakeMessagesLocked()
+            return true
         }
     }
 

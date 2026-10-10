@@ -12,6 +12,13 @@ import PresentationDataUtils
 
 private final class MiraFakeMessageState {
     var text: String = ""
+    var kind: FakeMessageKind = .text
+    var mediaResource: String = ""
+    var mediaFileName: String = ""
+    var mediaMimeType: String = ""
+    var mediaDuration: String = ""
+    var mediaStars: String = ""
+    var mediaStarCount: String = ""
     var oneMessagePerLine: Bool = false
     var conversationMode: Bool = false
     var outgoing: Bool = false
@@ -21,8 +28,30 @@ private final class MiraFakeMessageState {
     var exactDate: Int32 = Int32(Date().timeIntervalSince1970)
     var exactDateSelection: Bool = false
     var exactSeconds: String = String(format: "%02d", Calendar.current.component(.second, from: Date()))
+    var editingRecordId: String?
     var version: Int = 0
     var isSubmitting = false
+
+    init(editing record: FakeMessageRecord? = nil) {
+        guard let record else {
+            return
+        }
+        self.text = record.text
+        self.kind = record.kind
+        self.mediaResource = record.media?.resource ?? ""
+        self.mediaFileName = record.media?.fileName ?? ""
+        self.mediaMimeType = record.media?.mimeType ?? ""
+        self.mediaDuration = record.media?.duration.map(String.init) ?? ""
+        self.mediaStars = record.media?.stars.map(String.init) ?? ""
+        self.mediaStarCount = record.media?.starCount.map(String.init) ?? ""
+        self.outgoing = record.outgoing
+        self.sender = record.authorPeerId.map(String.init) ?? record.authorName ?? ""
+        self.datePreset = miraFakeMessageDatePresets.count - 2
+        self.exactDate = record.date
+        self.exactDateSelection = true
+        self.exactSeconds = String(format: "%02d", Int(record.date % 60 + 60) % 60)
+        self.editingRecordId = record.id
+    }
 }
 
 private final class MiraFakeMessageControllerArguments {
@@ -35,8 +64,29 @@ private final class MiraFakeMessageControllerArguments {
     }
 }
 
+private func miraFakeMessageKindTitle(_ kind: FakeMessageKind) -> String {
+    switch kind {
+    case .text: return "Text"
+    case .photo: return "Photo"
+    case .video: return "Video"
+    case .file: return "File"
+    case .audio: return "Audio"
+    case .voice: return "Voice message"
+    case .sticker: return "Sticker"
+    case .service: return "Service message"
+    case .stars: return "Stars payment"
+    }
+}
+
 private enum MiraFakeMessageEntry: ItemListNodeEntry {
     case input(String)
+    case kind(FakeMessageKind)
+    case mediaResource(String)
+    case mediaFileName(String)
+    case mediaMimeType(String)
+    case mediaDuration(String)
+    case mediaStars(String)
+    case mediaStarCount(String)
     case batchMode(Bool)
     case conversationMode(Bool)
     case directionHeader
@@ -53,7 +103,7 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
 
     var section: ItemListSectionId {
         switch self {
-        case .input, .batchMode, .conversationMode:
+        case .input, .kind, .mediaResource, .mediaFileName, .mediaMimeType, .mediaDuration, .mediaStars, .mediaStarCount, .batchMode, .conversationMode:
             return 0
         case .directionHeader, .fromThem, .fromMe, .senderHeader, .senderInput:
             return 1
@@ -68,32 +118,46 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
         switch self {
         case .input:
             return 0
-        case .batchMode:
+        case .kind:
             return 1
-        case .conversationMode:
+        case .mediaResource:
             return 2
-        case .directionHeader:
+        case .mediaFileName:
             return 3
-        case .fromThem:
+        case .mediaMimeType:
             return 4
-        case .fromMe:
+        case .mediaDuration:
             return 5
-        case .senderHeader:
+        case .mediaStars:
             return 6
-        case .senderInput:
+        case .mediaStarCount:
             return 7
-        case .dateHeader:
+        case .batchMode:
             return 8
+        case .conversationMode:
+            return 9
+        case .directionHeader:
+            return 10
+        case .fromThem:
+            return 11
+        case .fromMe:
+            return 12
+        case .senderHeader:
+            return 13
+        case .senderInput:
+            return 14
+        case .dateHeader:
+            return 15
         case let .preset(index, _, _):
-            return 9 + index
+            return 16 + index
         case .exactDatePicker:
-            return 9 + miraFakeMessageDatePresets.count
+            return 16 + miraFakeMessageDatePresets.count
         case .exactSeconds:
-            return 10 + miraFakeMessageDatePresets.count
+            return 17 + miraFakeMessageDatePresets.count
         case .customDays:
-            return 11 + miraFakeMessageDatePresets.count
+            return 18 + miraFakeMessageDatePresets.count
         case .hint:
-            return 12 + miraFakeMessageDatePresets.count
+            return 19 + miraFakeMessageDatePresets.count
         }
     }
 
@@ -111,6 +175,46 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
                 arguments.state.text = value
                 arguments.updated()
             })
+        case let .kind(kind):
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Content type", label: miraFakeMessageKindTitle(kind), sectionId: self.section, style: .blocks, action: {
+                let kinds: [FakeMessageKind] = [.text, .photo, .video, .file, .audio, .voice, .sticker, .service, .stars]
+                if let index = kinds.firstIndex(of: arguments.state.kind) {
+                    arguments.state.kind = kinds[(index + 1) % kinds.count]
+                } else {
+                    arguments.state.kind = .text
+                }
+                arguments.updated()
+            })
+        case let .mediaResource(value):
+            return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: value, placeholder: "Local file path or resource label", type: .regular(capitalization: false, autocorrection: false), sectionId: self.section, textUpdated: { value in
+                arguments.state.mediaResource = value
+                arguments.updated()
+            }, action: {})
+        case let .mediaFileName(value):
+            return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: value, placeholder: "File name (optional)", type: .regular(capitalization: false, autocorrection: false), sectionId: self.section, textUpdated: { value in
+                arguments.state.mediaFileName = value
+                arguments.updated()
+            }, action: {})
+        case let .mediaMimeType(value):
+            return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: value, placeholder: "MIME type (optional)", type: .regular(capitalization: false, autocorrection: false), sectionId: self.section, textUpdated: { value in
+                arguments.state.mediaMimeType = value
+                arguments.updated()
+            }, action: {})
+        case let .mediaDuration(value):
+            return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: value, placeholder: "Duration (seconds)", type: .number, sectionId: self.section, textUpdated: { value in
+                arguments.state.mediaDuration = value.filter { $0.isNumber }
+                arguments.updated()
+            }, action: {})
+        case let .mediaStars(value):
+            return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: value, placeholder: "Stars amount", type: .number, sectionId: self.section, textUpdated: { value in
+                arguments.state.mediaStars = value.filter { $0.isNumber }
+                arguments.updated()
+            }, action: {})
+        case let .mediaStarCount(value):
+            return ItemListSingleLineInputItem(presentationData: presentationData, title: NSAttributedString(), text: value, placeholder: "Star item count", type: .number, sectionId: self.section, textUpdated: { value in
+                arguments.state.mediaStarCount = value.filter { $0.isNumber }
+                arguments.updated()
+            }, action: {})
         case let .batchMode(value):
             return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "One message per line", value: value, sectionId: self.section, style: .blocks, updated: { value in
                 arguments.state.oneMessagePerLine = value
@@ -121,6 +225,9 @@ private enum MiraFakeMessageEntry: ItemListNodeEntry {
                 arguments.state.conversationMode = value
                 if value {
                     arguments.state.oneMessagePerLine = true
+                    // Script prefixes control direction per line; keep the
+                    // content descriptor text-only for deterministic scripts.
+                    arguments.state.kind = .text
                 }
                 arguments.updated()
             })
@@ -209,8 +316,8 @@ private func miraClampedMessageTimestamp(_ value: Int64) -> Int32 {
     return Int32(max(Int64(Int32.min), min(Int64(Int32.max), value)))
 }
 
-public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -> ViewController {
-    let state = MiraFakeMessageState()
+public func miraFakeMessageController(context: AccountContext, peerId: PeerId, editing record: FakeMessageRecord? = nil) -> ViewController {
+    let state = MiraFakeMessageState(editing: record)
     let versionPromise = ValuePromise<Int>(0, ignoreRepeated: true)
     var dismissImpl: (() -> Void)?
     let senderResolutionDisposable = MetaDisposable()
@@ -254,8 +361,38 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
             baseDate = now
         }
         let outgoing = state.outgoing
+        let mediaDescriptor: FakeMessageMedia? = {
+            guard state.kind != .text else {
+                return nil
+            }
+            let resource = state.mediaResource.trimmingCharacters(in: .whitespacesAndNewlines)
+            let fileName = state.mediaFileName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let mimeType = state.mediaMimeType.trimmingCharacters(in: .whitespacesAndNewlines)
+            return FakeMessageMedia(
+                kind: state.kind,
+                resource: resource.isEmpty ? nil : resource,
+                fileName: fileName.isEmpty ? nil : fileName,
+                mimeType: mimeType.isEmpty ? nil : mimeType,
+                duration: Int32(state.mediaDuration).flatMap { max(0, $0) },
+                stars: Int64(state.mediaStars).flatMap { max(0, $0) },
+                starCount: Int32(state.mediaStarCount).flatMap { max(0, $0) }
+            )
+        }()
         state.isSubmitting = true
         arguments.updated()
+
+        // Editing keeps the existing local Postbox id and author metadata.
+        // Do this before sender resolution so an edit never performs a network
+        // lookup for the label shown in the original fake message.
+        if let editingRecordId = state.editingRecordId {
+            let _ = (context.engine.messages.miraUpdateFakeMessage(id: editingRecordId, text: texts[0], date: baseDate, kind: state.kind, media: mediaDescriptor)
+            |> deliverOnMainQueue).start(completed: {
+                state.isSubmitting = false
+                arguments.updated()
+                dismissImpl?()
+            })
+            return
+        }
 
         let addMessages: (EnginePeer?, String?) -> Void = { author, fallbackName in
             isResolvingSender = false
@@ -283,13 +420,12 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
             }
             func insertBatch(startIndex: Int) {
                 let endIndex = min(startIndex + miraFakeMessageTransactionBatchSize, texts.count)
-                let messages: [(text: String, date: Int32)] = (startIndex ..< endIndex).map { index in
+                let messageDates: [(text: String, date: Int32)] = (startIndex ..< endIndex).map { index in
                     // Keep scripted lines in their entered order when the chat sorts by date.
                     let date = miraClampedMessageTimestamp(Int64(baseDate) - Int64(texts.count - 1 - index))
                     return (texts[index], date)
                 }
-                let _ = (context.engine.messages.miraAddFakeMessages(peerId: peerId, messages: messages, outgoing: outgoing, authorPeerId: author?.id, authorName: author?.compactDisplayTitle ?? fallbackName)
-                |> deliverOnMainQueue).start(completed: {
+                let completeBatch: () -> Void = {
                     if endIndex < texts.count {
                         insertBatch(startIndex: endIndex)
                     } else {
@@ -297,7 +433,17 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
                         arguments.updated()
                         dismissImpl?()
                     }
-                })
+                }
+                if state.kind == .text {
+                    let _ = (context.engine.messages.miraAddFakeMessages(peerId: peerId, messages: messageDates, outgoing: outgoing, authorPeerId: author?.id, authorName: author?.compactDisplayTitle ?? fallbackName)
+                    |> deliverOnMainQueue).start(completed: completeBatch)
+                } else {
+                    let mediaMessages: [(text: String, date: Int32, kind: FakeMessageKind, media: FakeMessageMedia?)] = messageDates.map { entry in
+                        return (text: entry.text, date: entry.date, kind: state.kind, media: mediaDescriptor)
+                    }
+                    let _ = (context.engine.messages.miraAddFakeMediaMessages(peerId: peerId, messages: mediaMessages, outgoing: outgoing, authorPeerId: author?.id, authorName: author?.compactDisplayTitle ?? fallbackName)
+                    |> deliverOnMainQueue).start(completed: completeBatch)
+                }
             }
             // Once accepted, all batches finish even if the user leaves this screen.
             // Only sender lookup is canceled by navigation; it has no local side effects.
@@ -351,12 +497,25 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId) -
 
     let signal = combineLatest(context.sharedContext.presentationData, versionPromise.get())
     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, MiraFakeMessageControllerArguments)) in
-        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Add Fake Message"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: state.isSubmitting ? .activity : .regular, enabled: !state.isSubmitting && !state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, action: {
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(state.editingRecordId == nil ? "Add Fake Message" : "Edit Fake Message"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: state.isSubmitting ? .activity : .regular, enabled: !state.isSubmitting && !state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, action: {
             resolveSenderAndAdd()
         }), backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
 
         var entries: [MiraFakeMessageEntry] = []
         entries.append(.input(state.text))
+        entries.append(.kind(state.kind))
+        if state.kind != .text {
+            entries.append(.mediaResource(state.mediaResource))
+            entries.append(.mediaFileName(state.mediaFileName))
+            entries.append(.mediaMimeType(state.mediaMimeType))
+            if state.kind == .audio || state.kind == .voice || state.kind == .video {
+                entries.append(.mediaDuration(state.mediaDuration))
+            }
+            if state.kind == .stars {
+                entries.append(.mediaStars(state.mediaStars))
+                entries.append(.mediaStarCount(state.mediaStarCount))
+            }
+        }
         entries.append(.batchMode(state.oneMessagePerLine))
         entries.append(.conversationMode(state.conversationMode))
         entries.append(.directionHeader)
@@ -484,7 +643,7 @@ private enum MiraFakeMessagesListEntry: ItemListNodeEntry {
             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         case let .message(_, record, title, detail):
             return ItemListDisclosureItem(presentationData: presentationData, title: title, label: detail, labelStyle: .detailText, sectionId: self.section, style: .blocks, action: {
-                arguments.confirmRemove(record)
+                arguments.showActions(record)
             })
         case let .removeAll(title):
             return ItemListActionItem(presentationData: presentationData, title: title, kind: .destructive, alignment: .natural, sectionId: self.section, style: .blocks, action: {
@@ -498,11 +657,13 @@ private enum MiraFakeMessagesListEntry: ItemListNodeEntry {
 
 private final class MiraFakeMessagesListArguments {
     let add: () -> Void
+    let showActions: (FakeMessageRecord) -> Void
     let confirmRemoveAll: () -> Void
     let confirmRemove: (FakeMessageRecord) -> Void
 
-    init(add: @escaping () -> Void, confirmRemoveAll: @escaping () -> Void, confirmRemove: @escaping (FakeMessageRecord) -> Void) {
+    init(add: @escaping () -> Void, showActions: @escaping (FakeMessageRecord) -> Void, confirmRemoveAll: @escaping () -> Void, confirmRemove: @escaping (FakeMessageRecord) -> Void) {
         self.add = add
+        self.showActions = showActions
         self.confirmRemoveAll = confirmRemoveAll
         self.confirmRemove = confirmRemove
     }
@@ -520,6 +681,34 @@ public func miraFakeMessagesController(context: AccountContext, peerId: PeerId) 
     var presentControllerImpl: ((ViewController) -> Void)?
     let arguments = MiraFakeMessagesListArguments(add: {
         pushControllerImpl?(miraFakeMessageController(context: context, peerId: peerId))
+    }, showActions: { record in
+        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+        let actionSheet = ActionSheetController(presentationData: presentationData)
+        actionSheet.setItemGroups([
+            ActionSheetItemGroup(items: [
+                ActionSheetButtonItem(title: "Edit", color: .accent, action: { [weak actionSheet] in
+                    actionSheet?.dismissAnimated()
+                    pushControllerImpl?(miraFakeMessageController(context: context, peerId: peerId, editing: record))
+                }),
+                ActionSheetButtonItem(title: presentationData.strings.Common_Delete, color: .destructive, action: { [weak actionSheet] in
+                    actionSheet?.dismissAnimated()
+                    let strings = context.sharedContext.currentPresentationData.with { $0.strings }
+                    let controller = textAlertController(context: context, title: "Remove Fake Message?", text: "This local message will be removed from the chat.", actions: [
+                        TextAlertAction(type: .genericAction, title: strings.Common_Cancel, action: {}),
+                        TextAlertAction(type: .destructiveAction, title: strings.Common_Delete, action: {
+                            let _ = context.engine.messages.miraRemoveFakeMessage(id: record.id).start()
+                        })
+                    ])
+                    presentControllerImpl?(controller)
+                })
+            ]),
+            ActionSheetItemGroup(items: [
+                ActionSheetButtonItem(title: presentationData.strings.Common_Cancel, color: .accent, font: .bold, action: { [weak actionSheet] in
+                    actionSheet?.dismissAnimated()
+                })
+            ])
+        ])
+        presentControllerImpl?(actionSheet)
     }, confirmRemoveAll: {
         let strings = context.sharedContext.currentPresentationData.with { $0.strings }
         let controller = textAlertController(context: context, title: "Remove Fake Messages?", text: "All local fake messages in this chat will be removed.", actions: [
@@ -556,7 +745,14 @@ public func miraFakeMessagesController(context: AccountContext, peerId: PeerId) 
         } else {
             for (index, record) in peerRecords.enumerated() {
                 let preview = record.text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-                let title = preview.isEmpty ? "(empty message)" : String(preview.prefix(80))
+                let title: String
+                if preview.isEmpty {
+                    title = "[\(miraFakeMessageKindTitle(record.kind))]"
+                } else if record.kind == .text {
+                    title = String(preview.prefix(80))
+                } else {
+                    title = "[\(miraFakeMessageKindTitle(record.kind))] \(String(preview.prefix(64)))"
+                }
                 let direction: String
                 if record.outgoing {
                     direction = "From you"
@@ -569,7 +765,7 @@ public func miraFakeMessagesController(context: AccountContext, peerId: PeerId) 
                 } else {
                     direction = "From chat"
                 }
-                entries.append(.message(index, record, title, "\(direction) · \(miraFakeMessageListDate(record.date))"))
+                entries.append(.message(index, record, title, "\(direction) · \(miraFakeMessageKindTitle(record.kind)) · \(miraFakeMessageListDate(record.date))"))
             }
             entries.append(.removeAll("Remove all fake messages"))
         }

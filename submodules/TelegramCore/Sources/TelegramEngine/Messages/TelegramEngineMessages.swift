@@ -231,6 +231,88 @@ public extension TelegramEngine {
             return self.miraAddFakeMessages(peerId: peerId, messages: [(text, date)], outgoing: outgoing, authorPeerId: authorPeerId, authorName: authorName)
         }
 
+        /// Inserts one or more local-only fake messages with a Telegram-like
+        /// content descriptor. The descriptor is persisted beside the local
+        /// message and is never passed to the network layer. Postbox media is
+        /// intentionally left empty until a renderer has a local resource it
+        /// can safely resolve; this keeps arbitrary file paths and URLs from
+        /// becoming accidental uploads.
+        public func miraAddFakeMediaMessages(peerId: PeerId, messages: [(text: String, date: Int32, kind: FakeMessageKind, media: FakeMessageMedia?)], outgoing: Bool, authorPeerId: PeerId? = nil, authorName: String? = nil) -> Signal<Void, NoError> {
+            guard !messages.isEmpty else {
+                return .complete()
+            }
+            let account = self.account
+            return account.postbox.transaction { transaction -> Void in
+                var records: [FakeMessageRecord] = []
+                var storeMessages: [StoreMessage] = []
+                records.reserveCapacity(messages.count)
+                storeMessages.reserveCapacity(messages.count)
+                for entry in messages {
+                    let descriptor: FakeMessageMedia?
+                    if let media = entry.media {
+                        descriptor = media.normalized
+                    } else if entry.kind == .text {
+                        descriptor = nil
+                    } else {
+                        descriptor = FakeMessageMedia(kind: entry.kind)
+                    }
+                    let record = FakeMessageRecord(messagePeerId: peerId.toInt64(), text: entry.text, date: entry.date, outgoing: outgoing, authorPeerId: outgoing ? nil : authorPeerId?.toInt64(), authorName: outgoing ? nil : authorName, kind: entry.kind, media: descriptor)
+                    var flags = StoreMessageFlags()
+                    if !outgoing {
+                        flags.insert(.Incoming)
+                    }
+                    let authorId: PeerId = outgoing ? account.peerId : (authorPeerId ?? peerId)
+                    storeMessages.append(StoreMessage(
+                        peerId: peerId,
+                        namespace: Namespaces.Message.Local,
+                        customStableId: nil,
+                        globallyUniqueId: record.stableUniqueId,
+                        groupingKey: nil,
+                        threadId: nil,
+                        timestamp: entry.date,
+                        flags: flags,
+                        tags: [],
+                        globalTags: [],
+                        localTags: [],
+                        forwardInfo: nil,
+                        authorId: authorId,
+                        text: entry.text,
+                        attributes: [],
+                        media: []
+                    ))
+                    records.append(record)
+                }
+                let stableIds = Set(records.map { $0.stableUniqueId })
+                var staleMessageIds: [MessageId] = []
+                transaction.withAllMessages(peerId: peerId, namespace: Namespaces.Message.Local) { existingMessage in
+                    if let globallyUniqueId = existingMessage.globallyUniqueId, stableIds.contains(globallyUniqueId) {
+                        staleMessageIds.append(existingMessage.id)
+                    }
+                    return true
+                }
+                if !staleMessageIds.isEmpty {
+                    transaction.deleteMessages(staleMessageIds, forEachMedia: nil)
+                }
+                let mapping = transaction.addMessages(storeMessages, location: .Random)
+                for index in records.indices {
+                    if let messageId = mapping[records[index].stableUniqueId] {
+                        records[index].messageId = messageId.id
+                        records[index].messageNamespace = messageId.namespace
+                        records[index].messagePeerId = messageId.peerId.toInt64()
+                    }
+                }
+                account.miraMessageHistoryStore.addFakeMessages(records)
+                if (peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup || peerId.namespace == Namespaces.Peer.CloudChannel),
+                   case .notIncluded = transaction.getPeerChatListInclusion(peerId) {
+                    transaction.updatePeerChatListInclusion(peerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
+                }
+            }
+        }
+
+        public func miraAddFakeMediaMessage(peerId: PeerId, text: String, kind: FakeMessageKind, media: FakeMessageMedia? = nil, outgoing: Bool, date: Int32, authorPeerId: PeerId? = nil, authorName: String? = nil) -> Signal<Void, NoError> {
+            return self.miraAddFakeMediaMessages(peerId: peerId, messages: [(text: text, date: date, kind: kind, media: media)], outgoing: outgoing, authorPeerId: authorPeerId, authorName: authorName)
+        }
+
         public func miraAddFakeMessages(peerId: PeerId, messages: [(text: String, date: Int32)], outgoing: Bool, authorPeerId: PeerId? = nil, authorName: String? = nil) -> Signal<Void, NoError> {
             guard !messages.isEmpty else {
                 return .complete()
@@ -293,10 +375,57 @@ public extension TelegramEngine {
                 // a user peer in the chat list exactly like a normal outgoing
                 // message so opening the chat remains reliable after adding
                 // fake content.
-                if peerId.namespace == Namespaces.Peer.CloudUser,
+                if (peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup || peerId.namespace == Namespaces.Peer.CloudChannel),
                    case .notIncluded = transaction.getPeerChatListInclusion(peerId) {
                     transaction.updatePeerChatListInclusion(peerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
                 }
+            }
+        }
+
+        /// Updates one local fake message in place. The local namespace and
+        /// stable id are deliberately preserved so history views do not lose
+        /// their anchor when the editor changes text or timestamp.
+        public func miraUpdateFakeMessage(id: String, text: String, date: Int32, kind: FakeMessageKind? = nil, media: FakeMessageMedia? = nil) -> Signal<Void, NoError> {
+            let account = self.account
+            guard let existing = account.miraMessageHistoryStore.fakeMessage(id: id),
+                  existing.messageId != 0,
+                  existing.messageNamespace == Namespaces.Message.Local,
+                  let peerId = MiraMessageHistoryStore.peerId(fromPackedValue: existing.messagePeerId) else {
+                return .complete()
+            }
+            let messageId = MessageId(peerId: peerId, namespace: existing.messageNamespace, id: existing.messageId)
+            return account.postbox.transaction { transaction -> Void in
+                guard let currentMessage = transaction.getMessage(messageId) else {
+                    return
+                }
+                let forwardInfo = currentMessage.forwardInfo.flatMap(StoreMessageForwardInfo.init)
+                transaction.updateMessage(messageId, update: { _ in
+                    return .update(StoreMessage(
+                        id: currentMessage.id,
+                        customStableId: nil,
+                        globallyUniqueId: currentMessage.globallyUniqueId,
+                        groupingKey: currentMessage.groupingKey,
+                        threadId: currentMessage.threadId,
+                        timestamp: date,
+                        flags: StoreMessageFlags(currentMessage.flags),
+                        tags: currentMessage.tags,
+                        globalTags: currentMessage.globalTags,
+                        localTags: currentMessage.localTags,
+                        forwardInfo: forwardInfo,
+                        authorId: currentMessage.author?.id,
+                        text: text,
+                        attributes: currentMessage.attributes,
+                        media: currentMessage.media
+                    ))
+                })
+                var updated = existing
+                updated.text = text
+                updated.date = date
+                if let kind {
+                    updated.kind = kind
+                    updated.media = kind == .text ? nil : media?.normalized
+                }
+                _ = account.miraMessageHistoryStore.updateFakeMessage(updated)
             }
         }
 
@@ -357,7 +486,7 @@ public extension TelegramEngine {
                     }
                 }
                 account.miraMessageHistoryStore.addFakeMessages(records)
-                if peerId.namespace == Namespaces.Peer.CloudUser,
+                if (peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup || peerId.namespace == Namespaces.Peer.CloudChannel),
                    case .notIncluded = transaction.getPeerChatListInclusion(peerId) {
                     transaction.updatePeerChatListInclusion(peerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
                 }

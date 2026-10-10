@@ -96,6 +96,8 @@ def source_for_harness() -> str:
     peer = PEER.read_text(encoding="utf-8")
     history_record = declaration(history, "public struct MiraMessageEditRecord")
     history_local = declaration(history, "public struct LocalOverrideRecord")
+    history_kind = declaration(history, "public enum FakeMessageKind")
+    history_media = declaration(history, "public struct FakeMessageMedia")
     history_fake = declaration(history, "public struct FakeMessageRecord")
     history_store = declaration(history, "public final class MiraMessageHistoryStore")
     peer_id = declaration(peer, "public struct PeerId")
@@ -123,7 +125,7 @@ def source_for_harness() -> str:
         )
     ]
     return "\n".join([DOUBLES, *signal_sources, peer_id, history_record,
-                       history_local, history_fake, history_store,
+                       history_local, history_kind, history_media, history_fake, history_store,
                        gift_model, gift_store])
 
 
@@ -181,6 +183,11 @@ unloadedGiftStore.clear()
 require(unloadedGiftStore.list().isEmpty, "gift clear before initial load")
 
 let record = FakeMessageRecord(id: "m1", messagePeerId: userId(42).toInt64(), text: "hello", date: 1, outgoing: false)
+let media = FakeMessageMedia(kind: .video, resource: "local://clip.mp4", duration: -4, width: -1, stars: -2)
+let mediaRecord = FakeMessageRecord(id: "media", messagePeerId: userId(42).toInt64(), text: "caption", date: 2, outgoing: true, kind: .video, media: media)
+require(mediaRecord.kind == .video && mediaRecord.media?.duration == 0 && mediaRecord.media?.width == 0 && mediaRecord.media?.stars == 0, "media metadata is normalized")
+let decodedMediaRecord = try! JSONDecoder().decode(FakeMessageRecord.self, from: JSONEncoder().encode(mediaRecord))
+require(decodedMediaRecord == mediaRecord, "media metadata persists")
 let history = MiraMessageHistoryStore(basePath: root.path)
 var historyEvents: [[FakeMessageRecord]] = []
 func lastHistoryId() -> String? { eventLock.lock(); defer { eventLock.unlock() }; return historyEvents.last?.first?.id }
@@ -190,6 +197,15 @@ history.addFakeMessage(record)
 waitUntil { history.fakeMessages(in: userId(42)).count == 1 && lastHistoryId() == "m1" }
 history.addFakeMessage(record)
 require(history.fakeMessages(in: userId(42)).count == 1, "duplicate fake id is ignored")
+var editedRecord = record
+editedRecord.text = "edited"
+editedRecord.date = 99
+require(history.updateFakeMessage(editedRecord), "existing fake message updates")
+require(history.fakeMessage(id: "m1")?.text == "edited" && history.fakeMessage(id: "m1")?.date == 99, "fake message edit is visible")
+var invalidEdit = editedRecord
+invalidEdit.messageNamespace = 99
+require(!history.updateFakeMessage(invalidEdit), "invalid fake message edit is rejected")
+require(MiraMessageHistoryStore(basePath: root.path).fakeMessage(id: "m1")?.text == "edited", "fake message edit persists")
 let bulk = (0..<1200).map { FakeMessageRecord(id: "bulk-\($0)", messagePeerId: userId(42).toInt64(), text: "row \($0)", date: Int32($0), outgoing: false) }
 history.addFakeMessages(bulk)
 require(history.fakeMessages(in: userId(42)).count == 1201, "bulk insertion preserves every record")
