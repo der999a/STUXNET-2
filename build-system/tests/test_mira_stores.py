@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 HISTORY = ROOT / "submodules/TelegramCore/Sources/State/MiraMessageHistoryStore.swift"
 GIFTS = ROOT / "submodules/TelegramCore/Sources/State/MiraFakeGiftsStore.swift"
+LEDGER = ROOT / "submodules/TelegramCore/Sources/State/MiraFakeStarsLedger.swift"
 PEER = ROOT / "submodules/Postbox/Sources/Peer.swift"
 SIGNALS = ROOT / "submodules/SSignalKit/SwiftSignalKit/Source"
 
@@ -93,6 +94,7 @@ public enum StarGiftReference { case peer(PeerId, Int64) }
 def source_for_harness() -> str:
     history = HISTORY.read_text(encoding="utf-8")
     gifts = GIFTS.read_text(encoding="utf-8")
+    ledger = LEDGER.read_text(encoding="utf-8")
     peer = PEER.read_text(encoding="utf-8")
     history_record = declaration(history, "public struct MiraMessageEditRecord")
     history_local = declaration(history, "public struct LocalOverrideRecord")
@@ -112,6 +114,10 @@ def source_for_harness() -> str:
         peer_id = remove_declaration(peer_id, method)
     gift_model = declaration(gifts, "public struct MiraFakeGift")
     gift_store = declaration(gifts, "public final class MiraFakeGiftsStore", "extension MiraFakeGiftsStore")
+    ledger_kind = declaration(ledger, "public enum MiraFakeStarsLedgerEntryKind")
+    ledger_entry = declaration(ledger, "public struct MiraFakeStarsLedgerEntry")
+    ledger_snapshot = declaration(ledger, "public struct MiraFakeStarsLedgerSnapshot")
+    ledger_store = declaration(ledger, "public final class MiraFakeStarsLedger")
     # Leave account/network projections out of this Foundation persistence test.
     # Their production implementations are compiled by the full app build.
     account_clear = declaration(gift_store, "    public func clear(account: Account)")
@@ -126,7 +132,7 @@ def source_for_harness() -> str:
     ]
     return "\n".join([DOUBLES, *signal_sources, peer_id, history_record,
                        history_local, history_kind, history_media, history_fake, history_store,
-                       gift_model, gift_store])
+                       gift_model, gift_store, ledger_kind, ledger_entry, ledger_snapshot, ledger_store])
 
 
 TEST_MAIN = r'''
@@ -181,6 +187,20 @@ try! JSONEncoder().encode([gift]).write(to: root.appendingPathComponent("mira-fa
 let unloadedGiftStore = MiraFakeGiftsStore(basePath: root.path)
 unloadedGiftStore.clear()
 require(unloadedGiftStore.list().isEmpty, "gift clear before initial load")
+
+let ledger = MiraFakeStarsLedger(basePath: root.path)
+require(ledger.setBalance(100, date: 10), "ledger initial balance")
+require(ledger.recordFakeStarsMessage(id: "stars-out", peerId: userId(42).toInt64(), amount: 25, outgoing: true, date: 11), "outgoing Stars debit")
+require(ledger.balance == 75, "outgoing Stars balance")
+require(ledger.recordFakeStarsMessage(id: "stars-out", peerId: userId(42).toInt64(), amount: 25, outgoing: true, date: 12), "duplicate Stars event is idempotent")
+require(ledger.recordGiftTransfer(id: "gift-transfer", peerId: userId(42).toInt64(), fee: 10, date: 13), "gift transfer debit")
+require(ledger.recordGiftConversion(id: "gift-convert", peerId: userId(42).toInt64(), stars: 43, date: 14), "gift conversion credit")
+require(ledger.balance == 108, "ledger mixed operations balance")
+require(!ledger.recordFakeStarsMessage(id: "too-large", peerId: userId(42).toInt64(), amount: 1000, outgoing: true, date: 15), "insufficient Stars rejected")
+let persistedLedger = MiraFakeStarsLedger(basePath: root.path)
+require(persistedLedger.balance == 108 && persistedLedger.entries.count == 4, "ledger persistence round trip")
+require(persistedLedger.adjustFakeStarsMessage(id: "stars-out", peerId: userId(42).toInt64(), oldAmount: 25, newAmount: 30, outgoing: true, date: 16), "Stars edit debit")
+require(persistedLedger.balance == 103, "Stars edit balance")
 
 let record = FakeMessageRecord(id: "m1", messagePeerId: userId(42).toInt64(), text: "hello", date: 1, outgoing: false)
 let media = FakeMessageMedia(kind: .video, resource: "local://clip.mp4", duration: -4, width: -1, stars: -2)

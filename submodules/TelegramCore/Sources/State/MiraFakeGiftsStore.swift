@@ -23,6 +23,7 @@ public struct MiraFakeGift: Codable, Equatable {
         case isHidden
         case isSaved
         case showInChat
+        case transferStars
         case chatMessagePeerId
         case chatMessageId
         case giftSnapshot
@@ -42,6 +43,9 @@ public struct MiraFakeGift: Codable, Equatable {
     public var isHidden: Bool
     public var isSaved: Bool
     public var showInChat: Bool
+    /// Optional local-only transfer fee. Nil preserves the old free-transfer
+    /// behaviour; when set, the fake Stars ledger debits it atomically.
+    public var transferStars: Int64?
 
     // Local "gift received" message location, set after insertion so it can be deleted again.
     public var chatMessagePeerId: Int64?
@@ -77,6 +81,7 @@ public struct MiraFakeGift: Codable, Equatable {
         isHidden: Bool = false,
         isSaved: Bool = false,
         showInChat: Bool = false,
+        transferStars: Int64? = nil,
         chatMessagePeerId: Int64? = nil,
         chatMessageId: Int32? = nil,
         giftSnapshot: StarGift? = nil
@@ -94,6 +99,7 @@ public struct MiraFakeGift: Codable, Equatable {
         self.isHidden = isHidden
         self.isSaved = isSaved
         self.showInChat = showInChat
+        self.transferStars = transferStars.map { max(0, $0) }
         self.chatMessagePeerId = chatMessagePeerId
         self.chatMessageId = chatMessageId
         self.giftSnapshot = giftSnapshot
@@ -114,6 +120,7 @@ public struct MiraFakeGift: Codable, Equatable {
         self.isHidden = try container.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
         self.isSaved = try container.decodeIfPresent(Bool.self, forKey: .isSaved) ?? false
         self.showInChat = try container.decodeIfPresent(Bool.self, forKey: .showInChat) ?? false
+        self.transferStars = try container.decodeIfPresent(Int64.self, forKey: .transferStars).map { max(0, $0) }
         self.chatMessagePeerId = try container.decodeIfPresent(Int64.self, forKey: .chatMessagePeerId)
         self.chatMessageId = try container.decodeIfPresent(Int32.self, forKey: .chatMessageId)
         self.giftSnapshot = try container.decodeIfPresent(StarGift.self, forKey: .giftSnapshot)
@@ -742,6 +749,16 @@ extension MiraFakeGiftsStore {
         }
         let entry = self.list().first(where: { $0.stableSavedId == savedId })
         if let entry {
+            if !entry.isUnique, case let .generic(gift)? = entry.giftSnapshot {
+                // Conversion is a local credit. The related gift id makes the
+                // operation idempotent if the UI sends the action twice.
+                _ = account.miraFakeStarsLedger.recordGiftConversion(
+                    id: entry.id,
+                    peerId: account.peerId.toInt64(),
+                    stars: max(0, gift.convertStars),
+                    date: entry.date
+                )
+            }
             let _ = self.deleteChatMessageSignal(account: account, entry: entry).start(completed: { [weak self] in
                 self?.remove(id: entry.id)
             })
@@ -765,6 +782,16 @@ extension MiraFakeGiftsStore {
               MiraFakeGift.isLocalSavedId(savedId),
               let source = self.list().first(where: { $0.stableSavedId == savedId }),
               source.isUnique else {
+            return .fail(.generic)
+        }
+        let transferFee = source.transferStars ?? 0
+        guard account.miraFakeStarsLedger.recordGiftTransfer(
+            id: source.id,
+            peerId: recipientPeerId.toInt64(),
+            fee: transferFee,
+            date: Int32(clamping: Int64(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970))
+        ) else {
+            // Insufficient local fake Stars leaves the source gift intact.
             return .fail(.generic)
         }
         let remove = self.deleteChatMessageSignal(account: account, entry: source)

@@ -284,6 +284,7 @@ private struct StuxnetAddFakeGiftState: Equatable {
     var isHidden: Bool = false
     var isSaved: Bool = false
     var showInChat: Bool = false
+    var transferStarsText: String = "0"
     var isSaving: Bool = false
 }
 
@@ -327,6 +328,7 @@ private enum StuxnetAddFakeGiftEntry: ItemListNodeEntry {
     case hidden(Bool)
     case saved(Bool)
     case showInChat(Bool)
+    case transferStarsInput(String)
     case footerInfo(String)
     case deleteGift(String)
 
@@ -338,7 +340,7 @@ private enum StuxnetAddFakeGiftEntry: ItemListNodeEntry {
             return StuxnetAddFakeGiftSection.gift.rawValue
         case .fromHeader, .fromInput, .fromPicker:
             return StuxnetAddFakeGiftSection.from.rawValue
-        case .detailsHeader, .captionInput, .dateRow, .hidden, .saved, .showInChat, .footerInfo:
+        case .detailsHeader, .captionInput, .dateRow, .hidden, .saved, .showInChat, .transferStarsInput, .footerInfo:
             return StuxnetAddFakeGiftSection.details.rawValue
         case .deleteGift:
             return StuxnetAddFakeGiftSection.delete.rawValue
@@ -377,10 +379,12 @@ private enum StuxnetAddFakeGiftEntry: ItemListNodeEntry {
             return 13
         case .showInChat:
             return 14
-        case .footerInfo:
+        case .transferStarsInput:
             return 15
-        case .deleteGift:
+        case .footerInfo:
             return 16
+        case .deleteGift:
+            return 17
         }
     }
 
@@ -459,6 +463,12 @@ private enum StuxnetAddFakeGiftEntry: ItemListNodeEntry {
                     state.showInChat = value
                 }
             })
+        case let .transferStarsInput(text):
+            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "NFT transfer fee (Stars)"), text: text, placeholder: "0", type: .number, sectionId: self.section, textUpdated: { value in
+                arguments.updateState { state in
+                    state.transferStarsText = value
+                }
+            }, action: {})
         case let .footerInfo(text):
             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         case let .deleteGift(title):
@@ -485,6 +495,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         state.isHidden = existingGift.isHidden
         state.isSaved = existingGift.isSaved
         state.showInChat = existingGift.showInChat
+        state.transferStarsText = existingGift.transferStars.map(String.init) ?? "0"
         initialState = state
     } else {
         initialState = StuxnetAddFakeGiftState()
@@ -618,7 +629,8 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
             date: state.exactTimestamp ?? state.datePreset.timestamp(),
             isHidden: state.isHidden,
             isSaved: state.isSaved,
-            showInChat: state.showInChat
+            showInChat: state.showInChat,
+            transferStars: max(0, Int64(state.transferStarsText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0)
         )
         if let senderId = state.selectedSenderId {
             gift.fromPeerId = senderId.toInt64()
@@ -771,6 +783,7 @@ public func stuxnetAddFakeGiftController(context: AccountContext, editing existi
         entries.append(.hidden(state.isHidden))
         entries.append(.saved(state.isSaved))
         entries.append(.showInChat(state.showInChat))
+        entries.append(.transferStarsInput(state.transferStarsText))
         entries.append(.footerInfo("The gift is only visible to you, on your own profile, while Fake Gifts are enabled."))
 
         if existingGift != nil {

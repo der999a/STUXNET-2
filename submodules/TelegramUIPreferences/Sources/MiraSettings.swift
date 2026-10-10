@@ -129,6 +129,205 @@ public struct MiraGhostSettings: Codable, Equatable {
     }
 }
 
+/// A supported social-video host. The raw value is also used as a bit in
+/// `MiraSocialVideoSettings.platforms` so the preference remains primitive and
+/// backwards-compatible with Telegram's shared-data encoder.
+public enum MiraSocialVideoPlatform: Int32, Codable, CaseIterable, Equatable {
+    case youtube = 1
+    case instagram = 2
+    case tiktok = 4
+    case twitter = 8
+    case vk = 16
+    case rutube = 32
+
+    public var title: String {
+        switch self {
+        case .youtube:
+            return "YouTube"
+        case .instagram:
+            return "Instagram"
+        case .tiktok:
+            return "TikTok"
+        case .twitter:
+            return "X / Twitter"
+        case .vk:
+            return "VK Video"
+        case .rutube:
+            return "Rutube"
+        }
+    }
+}
+
+public enum MiraSocialVideoQuality: Int32, Codable, CaseIterable, Equatable {
+    case source = 0
+    case p720 = 720
+    case p1080 = 1080
+
+    public var title: String {
+        switch self {
+        case .source:
+            return "Source"
+        case .p720:
+            return "720p"
+        case .p1080:
+            return "1080p"
+        }
+    }
+}
+
+public enum MiraSocialVideoDestination: Int32, Codable, CaseIterable, Equatable {
+    case files = 0
+    case photos = 1
+
+    public var title: String {
+        switch self {
+        case .files:
+            return "Files"
+        case .photos:
+            return "Photos"
+        }
+    }
+}
+
+public struct MiraSocialVideoSettings: Codable, Equatable {
+    public var enabled: Bool
+    public var platforms: Int32
+    public var wifiOnly: Bool
+    public var quality: MiraSocialVideoQuality
+    public var confirmBeforeDownload: Bool
+    public var destination: MiraSocialVideoDestination
+
+    public static let allPlatforms: Int32 = MiraSocialVideoPlatform.allCases.reduce(Int32(0)) { result, platform in
+        result | platform.rawValue
+    }
+
+    public init(
+        enabled: Bool = false,
+        platforms: Int32 = MiraSocialVideoSettings.allPlatforms,
+        wifiOnly: Bool = true,
+        quality: MiraSocialVideoQuality = .source,
+        confirmBeforeDownload: Bool = true,
+        destination: MiraSocialVideoDestination = .files
+    ) {
+        self.enabled = enabled
+        self.platforms = platforms & MiraSocialVideoSettings.allPlatforms
+        self.wifiOnly = wifiOnly
+        self.quality = quality
+        self.confirmBeforeDownload = confirmBeforeDownload
+        self.destination = destination
+    }
+
+    public func isEnabled(_ platform: MiraSocialVideoPlatform) -> Bool {
+        return (self.platforms & platform.rawValue) != 0
+    }
+
+    public mutating func setEnabled(_ enabled: Bool, for platform: MiraSocialVideoPlatform) {
+        if enabled {
+            self.platforms |= platform.rawValue
+        } else {
+            self.platforms &= ~platform.rawValue
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: StringCodingKey.self)
+        self.enabled = try container.decodeIfPresent(Bool.self, forKey: "enabled") ?? false
+        let decodedPlatforms = try container.decodeIfPresent(Int32.self, forKey: "platforms") ?? MiraSocialVideoSettings.allPlatforms
+        self.platforms = decodedPlatforms & MiraSocialVideoSettings.allPlatforms
+        self.wifiOnly = try container.decodeIfPresent(Bool.self, forKey: "wifiOnly") ?? true
+        let rawQuality = try container.decodeIfPresent(Int32.self, forKey: "quality") ?? MiraSocialVideoQuality.source.rawValue
+        self.quality = MiraSocialVideoQuality(rawValue: rawQuality) ?? .source
+        self.confirmBeforeDownload = try container.decodeIfPresent(Bool.self, forKey: "confirmBeforeDownload") ?? true
+        let rawDestination = try container.decodeIfPresent(Int32.self, forKey: "destination") ?? MiraSocialVideoDestination.files.rawValue
+        self.destination = MiraSocialVideoDestination(rawValue: rawDestination) ?? .files
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: StringCodingKey.self)
+        try container.encode(self.enabled, forKey: "enabled")
+        try container.encode(self.platforms & MiraSocialVideoSettings.allPlatforms, forKey: "platforms")
+        try container.encode(self.wifiOnly, forKey: "wifiOnly")
+        try container.encode(self.quality.rawValue, forKey: "quality")
+        try container.encode(self.confirmBeforeDownload, forKey: "confirmBeforeDownload")
+        try container.encode(self.destination.rawValue, forKey: "destination")
+    }
+}
+
+public struct MiraSocialVideoLink: Equatable {
+    public let platform: MiraSocialVideoPlatform
+    public let url: URL
+
+    public init(platform: MiraSocialVideoPlatform, url: URL) {
+        self.platform = platform
+        self.url = url
+    }
+}
+
+/// Local-only social-video URL recognition. This intentionally performs no
+/// redirects, metadata lookups, downloads, or other network activity.
+public enum MiraSocialVideoLinkParser {
+    public static func parse(_ text: String) -> MiraSocialVideoLink? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let candidate: String
+        if trimmed.range(of: "^[A-Za-z][A-Za-z0-9+.-]*://", options: .regularExpression) == nil {
+            candidate = "https://" + trimmed
+        } else {
+            candidate = trimmed
+        }
+        guard var components = URLComponents(string: candidate),
+              let host = components.host?.lowercased(),
+              components.user == nil,
+              components.password == nil,
+              components.port == nil,
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        let normalizedHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        let path = components.path.lowercased()
+        let platform: MiraSocialVideoPlatform?
+        switch normalizedHost {
+        case "youtube.com", "youtu.be":
+            if normalizedHost == "youtu.be" {
+                platform = path.count > 1 ? .youtube : nil
+            } else {
+                let supportedPath = path.hasPrefix("/watch") || path.hasPrefix("/shorts/") || path.hasPrefix("/live/") || path.hasPrefix("/embed/")
+                platform = supportedPath ? .youtube : nil
+            }
+        case "instagram.com":
+            platform = (path.hasPrefix("/reel/") || path.hasPrefix("/p/") || path.hasPrefix("/tv/")) ? .instagram : nil
+        case "tiktok.com":
+            platform = path.contains("/video/") ? .tiktok : nil
+        case "twitter.com", "x.com":
+            platform = path.contains("/status/") ? .twitter : nil
+        case "vk.com":
+            platform = path.hasPrefix("/video") ? .vk : nil
+        case "rutube.ru":
+            platform = path.hasPrefix("/video/") ? .rutube : nil
+        default:
+            platform = nil
+        }
+        guard let platform else {
+            return nil
+        }
+
+        // Fragments are client-only and cannot identify a video. Dropping one
+        // makes equality and local duplicate detection deterministic.
+        components.scheme = scheme
+        components.host = normalizedHost
+        components.fragment = nil
+        guard let url = components.url else {
+            return nil
+        }
+        return MiraSocialVideoLink(platform: platform, url: url)
+    }
+}
+
 public struct MiraSettings: Codable, Equatable {
     public var ghost: [String: MiraGhostSettings]
     /// Account-scoped Ghost Mode overrides. Keys use the account's stable peer id
@@ -185,6 +384,7 @@ public struct MiraSettings: Codable, Equatable {
     public var confirmSendVoice: Bool
     public var interfaceFont: Int32
     public var avatarCornerStyle: Int32
+    public var socialVideoSettings: MiraSocialVideoSettings
     
     public static var defaultSettings: MiraSettings {
         return MiraSettings()
@@ -264,7 +464,8 @@ public struct MiraSettings: Codable, Equatable {
         confirmSendGif: Bool = false,
         confirmSendVoice: Bool = false,
         interfaceFont: Int32 = 0,
-        avatarCornerStyle: Int32 = 0
+        avatarCornerStyle: Int32 = 0,
+        socialVideoSettings: MiraSocialVideoSettings = MiraSocialVideoSettings()
     ) {
         self.ghost = ghost
         self.ghostByAccount = ghostByAccount
@@ -311,6 +512,7 @@ public struct MiraSettings: Codable, Equatable {
         self.confirmSendVoice = confirmSendVoice
         self.interfaceFont = interfaceFont
         self.avatarCornerStyle = avatarCornerStyle
+        self.socialVideoSettings = socialVideoSettings
     }
     
     public func ghostSettings(forPeerId peerId: EnginePeer.Id?) -> MiraGhostSettings {
@@ -400,6 +602,7 @@ public struct MiraSettings: Codable, Equatable {
         self.confirmSendVoice = try container.decodeIfPresent(Bool.self, forKey: "confirmSendVoice") ?? false
         self.interfaceFont = try container.decodeIfPresent(Int32.self, forKey: "interfaceFont") ?? 0
         self.avatarCornerStyle = try container.decodeIfPresent(Int32.self, forKey: "avatarCornerStyle") ?? 0
+        self.socialVideoSettings = (try? container.decodeIfPresent(MiraSocialVideoSettings.self, forKey: "socialVideoSettings")) ?? MiraSocialVideoSettings()
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -450,6 +653,7 @@ public struct MiraSettings: Codable, Equatable {
         try container.encode(self.confirmSendVoice, forKey: "confirmSendVoice")
         try container.encode(self.interfaceFont, forKey: "interfaceFont")
         try container.encode(self.avatarCornerStyle, forKey: "avatarCornerStyle")
+        try container.encode(self.socialVideoSettings, forKey: "socialVideoSettings")
     }
 }
 

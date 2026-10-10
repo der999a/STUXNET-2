@@ -327,6 +327,17 @@ public extension TelegramEngine {
                 return .complete()
             }
             let account = self.account
+            // Fake Stars are local currency. Refuse an outgoing batch before
+            // touching Postbox when its total exceeds the local balance.
+            let starsAmount = messages.reduce(Int64(0)) { partial, entry in
+                guard outgoing, entry.kind == .stars, let stars = entry.media?.stars else {
+                    return partial
+                }
+                return partial <= Int64.max - max(0, stars) ? partial + max(0, stars) : Int64.max
+            }
+            guard account.miraFakeStarsLedger.canDebit(starsAmount) else {
+                return .complete()
+            }
             return account.postbox.transaction { transaction -> Void in
                 var records: [FakeMessageRecord] = []
                 var storeMessages: [StoreMessage] = []
@@ -395,6 +406,19 @@ public extension TelegramEngine {
                     }
                 }
                 account.miraMessageHistoryStore.addFakeMessages(records)
+                for record in records {
+                    guard record.kind == .stars else {
+                        continue
+                    }
+                    let amount = max(0, record.media?.stars ?? 0)
+                    _ = account.miraFakeStarsLedger.recordFakeStarsMessage(
+                        id: record.id,
+                        peerId: peerId.toInt64(),
+                        amount: amount,
+                        outgoing: record.outgoing,
+                        date: record.date
+                    )
+                }
                 if (peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup || peerId.namespace == Namespaces.Peer.CloudChannel),
                    case .notIncluded = transaction.getPeerChatListInclusion(peerId) {
                     transaction.updatePeerChatListInclusion(peerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
@@ -487,6 +511,19 @@ public extension TelegramEngine {
                 return .complete()
             }
             let messageId = MessageId(peerId: peerId, namespace: existing.messageNamespace, id: existing.messageId)
+            var prospective = existing
+            prospective.text = text
+            prospective.date = date
+            if let kind {
+                prospective.kind = kind
+                prospective.media = kind == .text ? nil : media?.normalized
+            }
+            let oldStars = existing.kind == .stars ? max(0, existing.media?.stars ?? 0) : 0
+            let newStars = prospective.kind == .stars ? max(0, prospective.media?.stars ?? 0) : 0
+            if existing.outgoing, newStars > oldStars,
+               !account.miraFakeStarsLedger.canDebit(newStars - oldStars) {
+                return .complete()
+            }
             return account.postbox.transaction { transaction -> Void in
                 guard let currentMessage = transaction.getMessage(messageId) else {
                     return
@@ -527,6 +564,14 @@ public extension TelegramEngine {
                     ))
                 })
                 _ = account.miraMessageHistoryStore.updateFakeMessage(updated)
+                _ = account.miraFakeStarsLedger.adjustFakeStarsMessage(
+                    id: existing.id,
+                    peerId: peerId.toInt64(),
+                    oldAmount: oldStars,
+                    newAmount: newStars,
+                    outgoing: existing.outgoing,
+                    date: date
+                )
             }
         }
 

@@ -386,6 +386,7 @@ private enum StuxnetHubEntry: ItemListNodeEntry {
                             settings = .defaultSettings
                         }
                         arguments.context.account.miraFakeGiftsStore.clear(account: arguments.context.account)
+                        arguments.context.account.miraFakeStarsLedger.clear()
                     }),
                     TextAlertAction(type: .genericAction, title: "Cancel", action: {
                     })
@@ -1129,6 +1130,7 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
     case starsHeader(String)
     case fakeStarsEnabled(Bool)
     case fakeStarsBalance(String)
+    case fakeStarsHistory
 
     case giftsHeader(String)
     case fakeGiftsEnabled(Bool)
@@ -1143,7 +1145,7 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
         switch self {
         case .localPremium, .fakePremiumSince:
             return StuxnetFakeSection.premium.rawValue
-        case .starsHeader, .fakeStarsEnabled, .fakeStarsBalance:
+        case .starsHeader, .fakeStarsEnabled, .fakeStarsBalance, .fakeStarsHistory:
             return StuxnetFakeSection.stars.rawValue
         case .giftsHeader, .fakeGiftsEnabled, .fakeGiftCount, .manageFakeGifts:
             return StuxnetFakeSection.gifts.rawValue
@@ -1164,20 +1166,22 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
             return 3
         case .fakeStarsBalance:
             return 4
-        case .giftsHeader:
+        case .fakeStarsHistory:
             return 5
-        case .fakeGiftsEnabled:
+        case .giftsHeader:
             return 6
-        case .fakeGiftCount:
+        case .fakeGiftsEnabled:
             return 7
-        case .manageFakeGifts:
+        case .fakeGiftCount:
             return 8
-        case .ratingHeader:
+        case .manageFakeGifts:
             return 9
-        case .fakeRatingEnabled:
+        case .ratingHeader:
             return 10
-        case .fakeRatingValue:
+        case .fakeRatingEnabled:
             return 11
+        case .fakeRatingValue:
+            return 12
         }
     }
 
@@ -1214,7 +1218,12 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
                     settings.fakeStarsBalance
                 }, range: 0 ... Int64.max, updateValue: { settings, value in
                     settings.fakeStarsBalance = value
+                    _ = arguments.context.account.miraFakeStarsLedger.setBalance(value, note: "Stuxnet fake Stars balance")
                 }, footer: "Local balance used only by Stuxnet fake Stars and transfers."))
+            })
+        case .fakeStarsHistory:
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Stars transaction history", label: "Local", sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetFakeStarsLedgerController(context: arguments.context))
             })
         case let .giftsHeader(text):
             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
@@ -1257,14 +1266,15 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
     }
 }
 
-private func stuxnetFakeEntries(settings: MiraSettings) -> [StuxnetFakeEntry] {
+private func stuxnetFakeEntries(settings: MiraSettings, ledgerBalance: Int64? = nil) -> [StuxnetFakeEntry] {
     var entries: [StuxnetFakeEntry] = []
     entries.append(.localPremium(settings.localPremium))
     entries.append(.fakePremiumSince(settings.fakePremiumSince))
 
     entries.append(.starsHeader("Stars".uppercased()))
     entries.append(.fakeStarsEnabled(settings.fakeStarsEnabled))
-    entries.append(.fakeStarsBalance(stuxnetFormattedNumber(settings.fakeStarsBalance)))
+    entries.append(.fakeStarsBalance(stuxnetFormattedNumber(ledgerBalance ?? settings.fakeStarsBalance)))
+    entries.append(.fakeStarsHistory)
 
     entries.append(.giftsHeader("Gifts".uppercased()))
     entries.append(.fakeGiftsEnabled(settings.fakeGiftsEnabled))
@@ -1279,6 +1289,100 @@ private func stuxnetFakeEntries(settings: MiraSettings) -> [StuxnetFakeEntry] {
     return entries
 }
 
+private enum StuxnetFakeStarsLedgerEntry: ItemListNodeEntry {
+    case header(String)
+    case balance(String)
+    case transaction(Int, String)
+    case empty(String)
+
+    var section: ItemListSectionId {
+        switch self {
+        case .header, .balance:
+            return 0
+        case .transaction, .empty:
+            return 1
+        }
+    }
+
+    var stableId: Int {
+        switch self {
+        case .header:
+            return 0
+        case .balance:
+            return 1
+        case let .transaction(index, _):
+            return 10 + index
+        case .empty:
+            return 10000
+        }
+    }
+
+    static func < (lhs: StuxnetFakeStarsLedgerEntry, rhs: StuxnetFakeStarsLedgerEntry) -> Bool {
+        return lhs.stableId < rhs.stableId
+    }
+
+    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+        switch self {
+        case let .header(text):
+            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
+        case let .balance(text):
+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+        case let .transaction(_, text), let .empty(text):
+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+        }
+    }
+}
+
+private func stuxnetFakeStarsLedgerKindTitle(_ kind: MiraFakeStarsLedgerEntryKind) -> String {
+    switch kind {
+    case .initial:
+        return "Balance adjustment"
+    case .credit:
+        return "Credit"
+    case .debit:
+        return "Debit"
+    case .fakeGiftTransfer:
+        return "Fake NFT transfer"
+    case .fakeGiftConversion:
+        return "Gift conversion"
+    case .fakeStarsMessage:
+        return "Fake Stars message"
+    }
+}
+
+private func stuxnetFakeStarsLedgerController(context: AccountContext) -> ViewController {
+    let signal = combineLatest(context.sharedContext.presentationData, context.account.miraFakeStarsLedger.changes)
+    |> map { presentationData, snapshot -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        var entries: [StuxnetFakeStarsLedgerEntry] = [
+            .header("Local Stars"),
+            .balance("Balance: \(stuxnetFormattedNumber(snapshot.balance)) Stars")
+        ]
+        if snapshot.entries.isEmpty {
+            entries.append(.empty("No local transactions yet."))
+        } else {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .short
+            formatter.timeStyle = .short
+            for (index, entry) in snapshot.entries.reversed().enumerated() {
+                let sign = entry.delta >= 0 ? "+" : ""
+                let date = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(entry.date)))
+                let note = entry.note.map { " · \($0)" } ?? ""
+                entries.append(.transaction(index, "\(date) · \(stuxnetFakeStarsLedgerKindTitle(entry.kind)) · \(sign)\(entry.delta) · \(entry.balance)\(note)"))
+            }
+        }
+        let controllerState = ItemListControllerState(
+            presentationData: ItemListPresentationData(presentationData),
+            title: .text("Stars history"),
+            leftNavigationButton: nil,
+            rightNavigationButton: nil,
+            backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back),
+            animateChanges: true
+        )
+        return (controllerState, (ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks), NSNull()))
+    }
+    return ItemListController(context: context, state: signal)
+}
+
 private func stuxnetFakeSettingsController(context: AccountContext) -> ViewController {
     var pushControllerImpl: ((ViewController) -> Void)?
 
@@ -1287,7 +1391,12 @@ private func stuxnetFakeSettingsController(context: AccountContext) -> ViewContr
     })
 
     let controller = stuxnetItemListController(context: context, title: "Fake Features", arguments: arguments, entries: { settings in
-        return stuxnetFakeEntries(settings: settings)
+        // Migrate the pre-ledger settings balance once. After that, message
+        // and gift operations own the durable ledger value.
+        if settings.fakeStarsBalance > 0 && context.account.miraFakeStarsLedger.entries.isEmpty {
+            _ = context.account.miraFakeStarsLedger.setBalance(settings.fakeStarsBalance, note: "Migrated fake Stars balance")
+        }
+        return stuxnetFakeEntries(settings: settings, ledgerBalance: context.account.miraFakeStarsLedger.balance)
     })
     pushControllerImpl = { [weak controller] c in
         (controller?.navigationController as? NavigationController)?.pushViewController(c)
@@ -1429,6 +1538,12 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
     case videoMessagesUseBackCamera(Bool)
     case interfaceFont(String)
     case avatarCorners(String)
+    case socialVideoEnabled(Bool)
+    case socialVideoWifiOnly(Bool)
+    case socialVideoConfirm(Bool)
+    case socialVideoQuality(String)
+    case socialVideoDestination(String)
+    case socialVideoPlatform(MiraSocialVideoPlatform, Bool)
 
     var section: ItemListSectionId {
         return 0
@@ -1452,6 +1567,18 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
             return 6
         case .avatarCorners:
             return 7
+        case .socialVideoEnabled:
+            return 8
+        case .socialVideoWifiOnly:
+            return 9
+        case .socialVideoConfirm:
+            return 10
+        case .socialVideoQuality:
+            return 11
+        case .socialVideoDestination:
+            return 12
+        case let .socialVideoPlatform(platform, _):
+            return 13 + Int(platform.rawValue)
         }
     }
 
@@ -1514,6 +1641,46 @@ private enum StuxnetAppearanceEntry: ItemListNodeEntry {
                     settings.avatarCornerStyle = Int32(value)
                 }))
             })
+        case let .socialVideoEnabled(value):
+            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "Social Video Links", value: value, sectionId: self.section, style: .blocks, updated: { value in
+                arguments.updateSettings { settings in
+                    settings.socialVideoSettings.enabled = value
+                }
+            })
+        case let .socialVideoWifiOnly(value):
+            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "Wi-Fi Only", value: value, sectionId: self.section, style: .blocks, updated: { value in
+                arguments.updateSettings { settings in
+                    settings.socialVideoSettings.wifiOnly = value
+                }
+            })
+        case let .socialVideoConfirm(value):
+            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: "Confirm before download", value: value, sectionId: self.section, style: .blocks, updated: { value in
+                arguments.updateSettings { settings in
+                    settings.socialVideoSettings.confirmBeforeDownload = value
+                }
+            })
+        case let .socialVideoQuality(label):
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Video Quality", label: label, sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetOptionsPickerController(context: arguments.context, title: "Video Quality", options: MiraSocialVideoQuality.allCases.map { (Int64($0.rawValue), $0.title) }, currentValue: { settings in
+                    return Int64(settings.socialVideoSettings.quality.rawValue)
+                }, updateValue: { settings, value in
+                    settings.socialVideoSettings.quality = MiraSocialVideoQuality(rawValue: Int32(value)) ?? .source
+                }))
+            })
+        case let .socialVideoDestination(label):
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Save to", label: label, sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetOptionsPickerController(context: arguments.context, title: "Save social videos to", options: MiraSocialVideoDestination.allCases.map { (Int64($0.rawValue), $0.title) }, currentValue: { settings in
+                    return Int64(settings.socialVideoSettings.destination.rawValue)
+                }, updateValue: { settings, value in
+                    settings.socialVideoSettings.destination = MiraSocialVideoDestination(rawValue: Int32(value)) ?? .files
+                }))
+            })
+        case let .socialVideoPlatform(platform, value):
+            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: platform.title, value: value, sectionId: self.section, style: .blocks, updated: { value in
+                arguments.updateSettings { settings in
+                    settings.socialVideoSettings.setEnabled(value, for: platform)
+                }
+            })
         }
     }
 }
@@ -1528,6 +1695,14 @@ private func stuxnetAppearanceEntries(settings: MiraSettings) -> [StuxnetAppeara
     entries.append(.videoMessagesUseBackCamera(settings.videoMessagesUseBackCamera))
     entries.append(.interfaceFont(stuxnetInterfaceFontOptionName(settings.interfaceFont)))
     entries.append(.avatarCorners(stuxnetAvatarCornerStyleName(settings.avatarCornerStyle)))
+    entries.append(.socialVideoEnabled(settings.socialVideoSettings.enabled))
+    entries.append(.socialVideoWifiOnly(settings.socialVideoSettings.wifiOnly))
+    entries.append(.socialVideoConfirm(settings.socialVideoSettings.confirmBeforeDownload))
+    entries.append(.socialVideoQuality(settings.socialVideoSettings.quality.title))
+    entries.append(.socialVideoDestination(settings.socialVideoSettings.destination.title))
+    for platform in MiraSocialVideoPlatform.allCases {
+        entries.append(.socialVideoPlatform(platform, settings.socialVideoSettings.isEnabled(platform)))
+    }
     return entries
 }
 
