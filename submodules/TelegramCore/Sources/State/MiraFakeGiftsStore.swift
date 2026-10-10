@@ -505,8 +505,35 @@ extension MiraFakeGiftsStore {
     // into the sender's chat, or into Saved Messages when there is no resolvable sender.
     // Returns the entry updated with chatMessagePeerId/chatMessageId for later deletion.
     public func insertChatMessage(account: Account, entry: MiraFakeGift) -> Signal<MiraFakeGift, NoError> {
-        if entry.chatMessageId != nil {
-            return .single(entry)
+        // A persisted entry can outlive its Postbox message (for example after
+        // history cleanup, an interrupted migration, or a previous build that
+        // used a different local id). Do not trust the cached id blindly: a
+        // missing message leaves the chat list with a stale projection and the
+        // next fake-gift edit can never repair it.
+        if let chatMessageId = entry.chatMessageId,
+           let storedPeerId = entry.chatMessagePeerId,
+           let chatMessagePeerId = MiraMessageHistoryStore.peerId(fromPackedValue: storedPeerId) {
+            let messageId = MessageId(peerId: chatMessagePeerId, namespace: Namespaces.Message.Local, id: chatMessageId)
+            return account.postbox.transaction { transaction -> Bool in
+                return transaction.getMessage(messageId) != nil
+            }
+            |> mapToSignal { exists -> Signal<MiraFakeGift, NoError> in
+                if exists {
+                    return .single(entry)
+                }
+                var repairedEntry = entry
+                repairedEntry.chatMessagePeerId = nil
+                repairedEntry.chatMessageId = nil
+                return self.insertChatMessage(account: account, entry: repairedEntry)
+            }
+        } else if entry.chatMessageId != nil || entry.chatMessagePeerId != nil {
+            // Clear malformed legacy references before attempting a fresh
+            // insertion. This also prevents invalid packed PeerIds from
+            // reaching Postbox's debug assertions.
+            var repairedEntry = entry
+            repairedEntry.chatMessagePeerId = nil
+            repairedEntry.chatMessageId = nil
+            return self.insertChatMessage(account: account, entry: repairedEntry)
         }
         return self.resolveEntry(entry, account: account)
         |> mapToSignal { resolved -> Signal<MiraFakeGift, NoError> in
