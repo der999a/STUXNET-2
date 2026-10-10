@@ -41,11 +41,11 @@ private final class MiraFakeMessageState {
         self.mediaResource = record.media?.resource ?? ""
         self.mediaFileName = record.media?.fileName ?? ""
         self.mediaMimeType = record.media?.mimeType ?? ""
-        self.mediaDuration = record.media?.duration.map(String.init) ?? ""
-        self.mediaStars = record.media?.stars.map(String.init) ?? ""
-        self.mediaStarCount = record.media?.starCount.map(String.init) ?? ""
+        self.mediaDuration = record.media?.duration.map { String($0) } ?? ""
+        self.mediaStars = record.media?.stars.map { String($0) } ?? ""
+        self.mediaStarCount = record.media?.starCount.map { String($0) } ?? ""
         self.outgoing = record.outgoing
-        self.sender = record.authorPeerId.map(String.init) ?? record.authorName ?? ""
+        self.sender = record.authorPeerId.map { String($0) } ?? record.authorName ?? ""
         self.datePreset = miraFakeMessageDatePresets.count - 2
         self.exactDate = record.date
         self.exactDateSelection = true
