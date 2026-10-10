@@ -545,7 +545,7 @@ extension MiraFakeGiftsStore {
            let chatMessagePeerId = MiraMessageHistoryStore.peerId(fromPackedValue: storedPeerId) {
             let messageId = MessageId(peerId: chatMessagePeerId, namespace: Namespaces.Message.Local, id: chatMessageId)
             return account.postbox.transaction { transaction -> Bool in
-                return transaction.getMessage(messageId) != nil
+                return transaction.getMessage(messageId)?.globallyUniqueId == entry.stableSavedId
             }
             |> mapToSignal { exists -> Signal<MiraFakeGift, NoError> in
                 if exists {
