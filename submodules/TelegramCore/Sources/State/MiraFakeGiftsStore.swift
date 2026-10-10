@@ -794,9 +794,10 @@ extension MiraFakeGiftsStore {
             // Insufficient local fake Stars leaves the source gift intact.
             return .fail(.generic)
         }
-        let remove = self.deleteChatMessageSignal(account: account, entry: source)
+        let remove: Signal<Void, TransferStarGiftError> = self.deleteChatMessageSignal(account: account, entry: source)
+        |> castError(TransferStarGiftError.self)
         return remove
-        |> mapToSignal { [weak self] _ -> Signal<Never, TransferStarGiftError> in
+        |> mapToSignal { [weak self] _ -> Signal<Never, NoError> in
             guard let self else {
                 return .complete()
             }
@@ -812,7 +813,7 @@ extension MiraFakeGiftsStore {
             transferred.showInChat = true
             return self.insertChatMessage(account: account, entry: transferred, forcedChatPeerId: recipientPeerId)
             |> ignoreValues
-            |> castError(TransferStarGiftError.self)
         }
+        |> castError(TransferStarGiftError.self)
     }
 }
