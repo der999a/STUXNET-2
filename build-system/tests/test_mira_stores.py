@@ -130,7 +130,7 @@ public enum Namespaces {
         public static let SecretChat = PeerId.Namespace._internalFromInt32Value(3)
     }
 }
-public struct MessageId { public let peerId: PeerId; public let namespace: Int32; public let id: Int32; public init(peerId: PeerId, namespace: Int32, id: Int32) { self.peerId = peerId; self.namespace = namespace; self.id = id } }
+public struct MessageId: Hashable { public let peerId: PeerId; public let namespace: Int32; public let id: Int32; public init(peerId: PeerId, namespace: Int32, id: Int32) { self.peerId = peerId; self.namespace = namespace; self.id = id } }
 public struct StarGift: Codable, Equatable { public init() {} }
 public enum StarGiftReference { case peer(PeerId, Int64) }
 '''
@@ -147,6 +147,7 @@ def source_for_harness() -> str:
     history_kind = declaration(history, "public enum FakeMessageKind")
     history_media = declaration(history, "public struct FakeMessageMedia")
     history_fake = declaration(history, "public struct FakeMessageRecord")
+    history_snapshot = declaration(history, "public struct MiraFakeMessagesSnapshot")
     history_store = declaration(history, "public final class MiraMessageHistoryStore")
     peer_id = declaration(peer, "public struct PeerId")
     # The store only needs the production packed-value constructor and encoder.
@@ -159,6 +160,7 @@ def source_for_harness() -> str:
     ):
         peer_id = remove_declaration(peer_id, method)
     gift_model = declaration(gifts, "public struct MiraFakeGift")
+    gift_snapshot = declaration(gifts, "public struct MiraFakeGiftsSnapshot")
     gift_store = declaration(gifts, "public final class MiraFakeGiftsStore", "extension MiraFakeGiftsStore")
     ledger_kind = declaration(ledger, "public enum MiraFakeStarsLedgerEntryKind")
     ledger_entry = declaration(ledger, "public struct MiraFakeStarsLedgerEntry")
@@ -183,8 +185,8 @@ def source_for_harness() -> str:
         )
     ]
     return "\n".join([DOUBLES, *signal_sources, peer_id, history_record,
-                       history_local, history_kind, history_media, history_fake, history_store,
-                       gift_model, gift_store, ledger_kind, ledger_entry, ledger_snapshot, ledger_store,
+                       history_local, history_kind, history_media, history_fake, history_snapshot, history_store,
+                       gift_model, gift_snapshot, gift_store, ledger_kind, ledger_entry, ledger_snapshot, ledger_store,
                        fake_channel, fake_channels_snapshot, fake_channels_store, profile_override,
                        profile_overrides_snapshot, profile_overrides_store])
 
