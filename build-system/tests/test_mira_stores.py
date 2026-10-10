@@ -222,7 +222,7 @@ require(loadedChannels.channel(id: channel.id)?.posts.isEmpty == true, "local po
 let localProfile = MiraLocalProfileOverridesStore(basePath: root.path)
 localProfile.set(MiraLocalProfileOverride(id: "account:1", username: "@local", tag: "@owner", phoneNumber: "+100", firstName: "Local", lastName: "Owner"))
 let loadedProfile = MiraLocalProfileOverridesStore(basePath: root.path)
-require(loadedProfile.effectiveUsername(forKey: "account:1", fallback: "server") == "@local", "local profile takes display precedence")
+require(loadedProfile.effectiveUsername(forKey: "account:1", fallback: "server") == "local", "local profile takes display precedence")
 require(loadedProfile.effectiveTag(forKey: "account:1", fallback: "server-tag") == "owner", "local profile tag projection persists")
 require(loadedProfile.effectivePhoneNumber(forKey: "account:1", fallback: "server-phone") == "+100", "local phone projection persists")
 require(loadedProfile.effectiveDisplayName(forKey: "account:1", fallback: "server name") == "Local Owner", "local profile name projection persists")
