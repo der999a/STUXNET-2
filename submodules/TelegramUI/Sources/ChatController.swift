@@ -8995,7 +8995,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
             
             var messages = messages
             var shouldOpenScheduledMessages = false
-            
+
             if shouldDivert {
                 messages = messages.map { message -> EnqueueMessage in
                     return message.withUpdatedAttributes { attributes in
@@ -9011,6 +9011,20 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
             var isScheduledMessages = false
             if case .scheduledMessages = self.presentationInterfaceState.subject {
                 isScheduledMessages = true
+            }
+
+            // Social-video auto-download is an opt-in local side effect. It
+            // only recognizes supported hosts and never alters the outgoing
+            // Telegram message or uploads the downloaded file.
+            if !isScheduledMessages {
+                let socialVideoSettings = self.context.sharedContext.immediateMiraSettings.socialVideoSettings
+                if socialVideoSettings.enabled {
+                    for message in messages {
+                        if case let .message(text, _, _, _, _, _, _, _, _, _) = message {
+                            MiraSocialVideoDownloader.enqueue(text: text, settings: socialVideoSettings)
+                        }
+                    }
+                }
             }
             
             if commit || !isScheduledMessages {
