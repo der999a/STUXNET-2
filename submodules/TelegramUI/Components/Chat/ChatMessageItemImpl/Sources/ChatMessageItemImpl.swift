@@ -312,7 +312,33 @@ public final class ChatMessageItemImpl: ChatMessageItem, CustomStringConvertible
         self.chatLocation = chatLocation
         self.associatedData = associatedData
         self.controllerInteraction = controllerInteraction
-        self.content = content
+        // Fake messages carry a separate local read marker. Use it for the
+        // bubble status/checkmarks without touching Telegram's cloud read
+        // indexes; all normal messages retain the history-provided value.
+        self.content = {
+            switch content {
+            case let .message(message, read, selection, attributes, location):
+                guard message.id.namespace == Namespaces.Message.Local,
+                      let fake = context.account.miraMessageHistoryStore.fakeMessage(messageId: message.id) else {
+                    return content
+                }
+                return .message(message: message, read: fake.isRead, selection: selection, attributes: attributes, location: location)
+            case let .group(messages):
+                let updated = messages.map { value -> (EngineRawMessage, Bool, ChatHistoryMessageSelection, ChatMessageEntryAttributes, EngineMessageHistoryEntryLocation?) in
+                    let message = value.0
+                    let read = value.1
+                    let selection = value.2
+                    let attributes = value.3
+                    let location = value.4
+                    guard message.id.namespace == Namespaces.Message.Local,
+                          let fake = context.account.miraMessageHistoryStore.fakeMessage(messageId: message.id) else {
+                        return (message, read, selection, attributes, location)
+                    }
+                    return (message, fake.isRead, selection, attributes, location)
+                }
+                return .group(messages: updated)
+            }
+        }()
         self.disableDate = disableDate || !controllerInteraction.chatIsRotated
         self.additionalContent = additionalContent
         
