@@ -1091,7 +1091,7 @@ extension MiraFakeGiftsStore {
         // Persist the recipient projection before deleting the source. This
         // ordering makes a crash recoverable: a retry finds the same transfer
         // id, replaces its chat row, and then removes the source.
-        return self.insertChatMessage(account: account, entry: transferred, forcedChatPeerId: recipientPeerId)
+        return (self.insertChatMessage(account: account, entry: transferred, forcedChatPeerId: recipientPeerId) |> castError(TransferStarGiftError.self))
         |> mapToSignal { [weak self] inserted -> Signal<Never, TransferStarGiftError> in
             guard let self else {
                 return .complete()
