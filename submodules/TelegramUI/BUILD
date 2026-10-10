@@ -48,11 +48,6 @@ swift_library(
     copts = [
         "-warnings-as-errors",
     ],
-    sdk_frameworks = [
-        "AVFoundation",
-        "Network",
-        "Photos",
-    ],
     deps = [
         "//third-party/recaptcha:RecaptchaEnterprise",
         "//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",

@@ -9,7 +9,6 @@ swift_library(
     copts = [
         "-warnings-as-errors",
     ],
-    sdk_frameworks = ["Photos"],
     deps = [
         "//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",
         "//submodules/AsyncDisplayKit:AsyncDisplayKit",
