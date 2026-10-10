@@ -777,7 +777,21 @@ public func stuxnetLocalProfilePreviewController(context: AccountContext) -> Vie
     let key = String(context.account.peerId.toInt64())
     let arguments = StuxnetLocalProfileOverrideArguments(
         value: store.`override`(forKey: key) ?? MiraLocalProfileOverride(id: key),
-        save: { value in store.set(value) }
+        save: { value in
+            store.set(value)
+            // Keep the codec-backed settings editor in sync with the account
+            // local projection used by profile and chat renderers.
+            let settingsValue = MiraLocalPeerOverride(
+                username: value.username,
+                tag: value.tag,
+                phone: value.phoneNumber,
+                firstName: value.firstName,
+                lastName: value.lastName
+            )
+            let _ = updateMiraSettingsInteractively(accountManager: context.sharedContext.accountManager) { settings in
+                settings.setLocalPeerOverride(settingsValue, forPeerId: context.account.peerId.toInt64())
+            }.start()
+        }
     )
     var dismissImpl: (() -> Void)?
     let signal = combineLatest(context.sharedContext.presentationData, store.changes)

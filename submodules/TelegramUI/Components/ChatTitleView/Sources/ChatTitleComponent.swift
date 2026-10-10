@@ -18,18 +18,26 @@ private func miraProjectedChatTitlePeer(context: AccountContext, peer: Peer) -> 
     guard let user = peer as? TelegramUser else {
         return peer
     }
-    guard let value = context.account.miraLocalProfileOverridesStore.override(forKey: String(user.id.toInt64())) else {
+    let key = String(user.id.toInt64())
+    let localValue = context.account.miraLocalProfileOverridesStore.override(forKey: key)
+    let settingsValue = context.sharedContext.immediateMiraSettings.localPeerOverride(forPeerId: user.id.toInt64())
+    guard localValue != nil || settingsValue != nil else {
         return peer
     }
     var projected = user
-    if value.username != nil || value.tag != nil {
-        projected = projected.withUpdatedUsername(value.username ?? value.tag)
+    let username = localValue?.username ?? settingsValue?.username
+    let tag = localValue?.tag ?? settingsValue?.tag
+    if username != nil || tag != nil {
+        projected = projected.withUpdatedUsername(username ?? tag)
     }
-    if value.firstName != nil || value.lastName != nil {
-        projected = projected.withUpdatedNames(firstName: value.firstName ?? user.firstName, lastName: value.lastName ?? user.lastName)
+    let firstName = localValue?.firstName ?? settingsValue?.firstName
+    let lastName = localValue?.lastName ?? settingsValue?.lastName
+    if firstName != nil || lastName != nil {
+        projected = projected.withUpdatedNames(firstName: firstName ?? user.firstName, lastName: lastName ?? user.lastName)
     }
-    if value.phoneNumber != nil {
-        projected = projected.withUpdatedPhone(value.phoneNumber)
+    let phone = localValue?.phoneNumber ?? settingsValue?.phone
+    if phone != nil {
+        projected = projected.withUpdatedPhone(phone)
     }
     return projected
 }

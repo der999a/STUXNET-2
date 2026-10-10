@@ -999,6 +999,20 @@ private func stuxnetLocalPeerOverrideEditorController(context: AccountContext, p
             }
             settings.setLocalPeerOverride(value, forPeerId: newPeerId)
         }).start()
+        // The settings dictionary drives the editor/list, while Telegram UI
+        // projections read the account-local store. Keep both layers in sync
+        // so an override takes effect immediately in chats and profiles.
+        if let peerId, peerId != newPeerId {
+            _ = context.account.miraLocalProfileOverridesStore.remove(forKey: String(peerId))
+        }
+        context.account.miraLocalProfileOverridesStore.set(MiraLocalProfileOverride(
+            id: String(newPeerId),
+            username: value.username,
+            tag: value.tag,
+            phoneNumber: value.phone,
+            firstName: value.firstName,
+            lastName: value.lastName
+        ))
         dismissImpl?()
     }
     let delete: () -> Void = {
@@ -1008,6 +1022,7 @@ private func stuxnetLocalPeerOverrideEditorController(context: AccountContext, p
         let _ = updateMiraSettingsInteractively(accountManager: context.sharedContext.accountManager, { settings in
             settings.removeLocalPeerOverride(forPeerId: peerId)
         }).start()
+        _ = context.account.miraLocalProfileOverridesStore.remove(forKey: String(peerId))
         dismissImpl?()
     }
     let arguments = StuxnetLocalPeerOverrideEditorArguments(state: state, originalPeerId: peerId, update: update, save: save, delete: delete)
