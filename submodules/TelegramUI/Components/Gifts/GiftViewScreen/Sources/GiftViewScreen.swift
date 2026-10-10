@@ -5464,21 +5464,29 @@ final class GiftViewSheetComponent: CombinedComponent {
                                     guard let peer, let navigationController else {
                                         return
                                     }
-                                    context.sharedContext.navigateToChatController(NavigateToChatControllerParams(
-                                        navigationController: navigationController,
-                                        chatController: nil,
-                                        context: context,
-                                        chatLocation: .peer(peer),
-                                        subject: nil,
-                                        botStart: nil,
-                                        updateTextInputState: nil,
-                                        keepStack: .always,
-                                        useExisting: true,
-                                        purposefulAction: nil,
-                                        scrollToEndIfExists: false,
-                                        activateMessageSearch: nil,
-                                        animated: true
-                                    ))
+                                    let navigate = {
+                                        context.sharedContext.navigateToChatController(NavigateToChatControllerParams(
+                                            navigationController: navigationController,
+                                            chatController: nil,
+                                            context: context,
+                                            chatLocation: .peer(peer),
+                                            subject: nil,
+                                            botStart: nil,
+                                            updateTextInputState: nil,
+                                            keepStack: .always,
+                                            useExisting: true,
+                                            purposefulAction: nil,
+                                            scrollToEndIfExists: false,
+                                            activateMessageSearch: nil,
+                                            animated: true
+                                        ))
+                                    }
+                                    // The sender header lives inside the gift
+                                    // sheet. Push only after the sheet has
+                                    // completed dismissal; pushing while it is
+                                    // presented can leave the navigation stack
+                                    // unchanged on iOS.
+                                    controller.dismiss(completion: navigate)
                                 })
                             }
                         })
