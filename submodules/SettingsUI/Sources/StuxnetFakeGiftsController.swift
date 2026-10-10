@@ -55,7 +55,20 @@ private func stuxnetFakeGiftSubtitle(_ gift: MiraFakeGift) -> String {
     } else {
         fromPart = "Anonymous"
     }
-    return "from \(fromPart) · \(stuxnetFakeGiftDateString(gift.date))"
+    var details = "from \(fromPart) · \(stuxnetFakeGiftDateString(gift.date))"
+    if case let .generic(genericGift) = gift.giftSnapshot, genericGift.convertStars > 0 {
+        details += " · converts to \(genericGift.convertStars) Stars"
+    }
+    return details
+}
+
+private func stuxnetFakeGiftKindLabel(_ gift: MiraFakeGift) -> String {
+    switch gift.kind {
+    case .regular:
+        return "Regular"
+    case .uniqueBySlug, .uniqueById:
+        return "NFT"
+    }
 }
 
 private func stuxnetNormalizedGiftSlug(_ text: String) -> String {
@@ -131,12 +144,15 @@ private enum StuxnetFakeGiftsControllerEntry: ItemListNodeEntry {
         case let .giftsHeader(text):
             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
         case let .gift(_, gift, title, subtitle):
-            var badges: [String] = []
+            var badges: [String] = [stuxnetFakeGiftKindLabel(gift)]
             if gift.isSaved {
                 badges.append("Pinned")
             }
             if gift.isHidden {
                 badges.append("Hidden")
+            }
+            if gift.showInChat {
+                badges.append("In chat")
             }
             let detail = badges.isEmpty ? subtitle : "\(subtitle) · \(badges.joined(separator: ", "))"
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: "", labelStyle: .detailText, additionalDetailLabel: detail, sectionId: self.section, style: .blocks, action: {
@@ -962,6 +978,7 @@ private enum StuxnetFakeGiftDatePickerEntry: ItemListNodeEntry {
     case customDays(String)
     case exactDate(Int32, Bool)
     case seconds(String)
+    case info(String)
 
     var section: ItemListSectionId {
         return 0
@@ -977,6 +994,8 @@ private enum StuxnetFakeGiftDatePickerEntry: ItemListNodeEntry {
             return 100001
         case .seconds:
             return 100002
+        case .info:
+            return 100003
         }
     }
 
@@ -992,7 +1011,8 @@ private enum StuxnetFakeGiftDatePickerEntry: ItemListNodeEntry {
                 arguments.select(preset)
             })
         case let .customDays(text):
-            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "Custom"), text: text, placeholder: "Days back", type: .number, returnKeyType: .done, sectionId: self.section, textUpdated: { value in
+            let title = presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Дней назад" : "Days back"
+            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: title), text: text, placeholder: "0", type: .number, returnKeyType: .done, sectionId: self.section, textUpdated: { value in
                 arguments.updateCustomDays(value)
             }, action: {})
         case let .exactDate(timestamp, selectingDate):
@@ -1006,6 +1026,8 @@ private enum StuxnetFakeGiftDatePickerEntry: ItemListNodeEntry {
             })
         case let .seconds(text):
             return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Секунды" : "Seconds"), text: text, placeholder: "0–59", type: .number, returnKeyType: .done, sectionId: self.section, textUpdated: arguments.updateSeconds, action: {})
+        case let .info(text):
+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         }
     }
 }
@@ -1082,6 +1104,10 @@ private func stuxnetFakeGiftDatePickerController(context: AccountContext, curren
         entries.append(.customDays(customDaysText))
         entries.append(.exactDate(exactDate, selectingDate))
         entries.append(.seconds(secondsText))
+        let dateInfo = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+            ? "Выберите готовую дату или укажите точную дату, время и секунды. Подарок останется только на этом устройстве."
+            : "Choose a preset or enter an exact date, time, and seconds. The gift stays on this device only."
+        entries.append(.info(dateInfo))
 
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Дата подарка" : "Gift Date"), leftNavigationButton: nil, rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: .bold, enabled: Int(secondsText).map { (0 ... 59).contains($0) } ?? false, action: {
             applyCustom()

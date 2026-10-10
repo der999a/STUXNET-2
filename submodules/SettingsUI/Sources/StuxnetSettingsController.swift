@@ -25,6 +25,11 @@ private func stuxnetFormattedNumber(_ value: Int64) -> String {
     return result
 }
 
+private func stuxnetFormattedGiftInventory(_ value: Int32) -> String {
+    let count = Int64(max(0, value))
+    return "\(stuxnetFormattedNumber(count)) \(count == 1 ? \"gift\" : \"gifts\")"
+}
+
 private func stuxnetSendWithoutSoundString(_ value: Int32) -> String {
     switch value {
     case 1:
@@ -1088,7 +1093,7 @@ private func stuxnetSpyEntries(settings: MiraSettings) -> [StuxnetSpyEntry] {
 
     entries.append(.localMessageEditEnabled(settings.localMessageEditEnabled))
     entries.append(.fakeMessagesEnabled(settings.fakeMessagesEnabled))
-    entries.append(.fakeMessagesInfo("Enables 'Add Fake Message' in the message context menu."))
+    entries.append(.fakeMessagesInfo("Use a chat's menu > Manage Fake Messages to build a local conversation. Messages stay on this device and are never sent to Telegram."))
     return entries
 }
 
@@ -1220,12 +1225,12 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
                 }
             })
         case let .fakeGiftCount(label):
-            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Profile gift inventory", label: label, sectionId: self.section, style: .blocks, action: {
-                arguments.pushController(stuxnetManualIntegerController(context: arguments.context, title: "Profile gift inventory", currentValue: { settings in
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Profile gift slots", label: label, sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetManualIntegerController(context: arguments.context, title: "Profile gift slots", currentValue: { settings in
                     Int64(settings.fakeGiftCount)
                 }, range: 0 ... Int64(Int32.max), updateValue: { settings, value in
                     settings.fakeGiftCount = Int32(value)
-                }, footer: "Number of locally generated gifts shown in your profile. It does not create server gifts."))
+                }, footer: "Controls how many local gift slots are shown on your profile. It does not create or send server gifts."))
             })
         case .manageFakeGifts:
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Manage Fake Gifts…", label: "", sectionId: self.section, style: .blocks, action: {
@@ -1240,13 +1245,13 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
                 }
             })
         case let .fakeRatingValue(label):
-            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Rating Stars", label: label, sectionId: self.section, style: .blocks, action: {
-                arguments.pushController(stuxnetManualIntegerController(context: arguments.context, title: "Rating Stars", currentValue: { settings in
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Rating value (Stars)", label: label, sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetManualIntegerController(context: arguments.context, title: "Rating value (Stars)", currentValue: { settings in
                     settings.fakeRatingValue
                 }, range: 0 ... Int64.max, updateValue: { settings, value in
                     settings.fakeRatingValue = value
                     settings.fakeRatingLevel = MiraSettings.starRatingLevel(forStars: value)
-                }, footer: "Enter the total rating value. The Telegram-style level is calculated automatically."))
+                }, footer: "Enter the total rating value. The displayed Telegram-style level is calculated automatically from this value."))
             })
         }
     }
@@ -1263,7 +1268,7 @@ private func stuxnetFakeEntries(settings: MiraSettings) -> [StuxnetFakeEntry] {
 
     entries.append(.giftsHeader("Gifts".uppercased()))
     entries.append(.fakeGiftsEnabled(settings.fakeGiftsEnabled))
-    entries.append(.fakeGiftCount(stuxnetFormattedNumber(Int64(settings.fakeGiftCount))))
+    entries.append(.fakeGiftCount(stuxnetFormattedGiftInventory(settings.fakeGiftCount)))
     entries.append(.manageFakeGifts)
 
     entries.append(.ratingHeader("Rating".uppercased()))
