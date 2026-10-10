@@ -690,6 +690,10 @@ public func miraFakeMessagesController(context: AccountContext, peerId: PeerId) 
                     actionSheet?.dismissAnimated()
                     pushControllerImpl?(miraFakeMessageController(context: context, peerId: peerId, editing: record))
                 }),
+                ActionSheetButtonItem(title: record.isRead ? "Mark as unread" : "Mark as read", color: .accent, action: { [weak actionSheet] in
+                    actionSheet?.dismissAnimated()
+                    let _ = context.engine.messages.miraSetFakeMessageRead(id: record.id, isRead: !record.isRead).start()
+                }),
                 ActionSheetButtonItem(title: presentationData.strings.Common_Delete, color: .destructive, action: { [weak actionSheet] in
                     actionSheet?.dismissAnimated()
                     let strings = context.sharedContext.currentPresentationData.with { $0.strings }
@@ -765,7 +769,8 @@ public func miraFakeMessagesController(context: AccountContext, peerId: PeerId) 
                 } else {
                     direction = "From chat"
                 }
-                entries.append(.message(index, record, title, "\(direction) · \(miraFakeMessageKindTitle(record.kind)) · \(miraFakeMessageListDate(record.date))"))
+                let readState = record.isRead ? "Read" : "Unread"
+                entries.append(.message(index, record, title, "\(direction) · \(miraFakeMessageKindTitle(record.kind)) · \(readState) · \(miraFakeMessageListDate(record.date))"))
             }
             entries.append(.removeAll("Remove all fake messages"))
         }

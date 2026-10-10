@@ -125,8 +125,11 @@ public struct FakeMessageRecord: Codable, Equatable {
     public var authorName: String?
     public var kind: FakeMessageKind
     public var media: FakeMessageMedia?
+    /// Local-only read state used by the fake-chat editor. This never changes
+    /// Telegram's read history or emits a network acknowledgement.
+    public var isRead: Bool
 
-    public init(id: String = UUID().uuidString, messagePeerId: Int64, messageNamespace: Int32 = Namespaces.Message.Local, messageId: Int32 = 0, text: String, entities: [MessageTextEntity] = [], date: Int32, outgoing: Bool, authorPeerId: Int64? = nil, authorName: String? = nil, kind: FakeMessageKind = .text, media: FakeMessageMedia? = nil) {
+    public init(id: String = UUID().uuidString, messagePeerId: Int64, messageNamespace: Int32 = Namespaces.Message.Local, messageId: Int32 = 0, text: String, entities: [MessageTextEntity] = [], date: Int32, outgoing: Bool, authorPeerId: Int64? = nil, authorName: String? = nil, kind: FakeMessageKind = .text, media: FakeMessageMedia? = nil, isRead: Bool? = nil) {
         self.id = id
         self.messagePeerId = messagePeerId
         self.messageNamespace = messageNamespace
@@ -139,10 +142,13 @@ public struct FakeMessageRecord: Codable, Equatable {
         self.authorName = authorName
         self.kind = kind
         self.media = media?.normalized
+        // Outgoing messages are read by definition; incoming fake messages
+        // start unread unless the editor explicitly sets a state.
+        self.isRead = isRead ?? outgoing
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, messagePeerId, messageNamespace, messageId, text, entities, date, outgoing, authorPeerId, authorName, kind, media
+        case id, messagePeerId, messageNamespace, messageId, text, entities, date, outgoing, authorPeerId, authorName, kind, media, isRead
     }
 
     public init(from decoder: Decoder) throws {
@@ -159,6 +165,9 @@ public struct FakeMessageRecord: Codable, Equatable {
         self.authorName = try container.decodeIfPresent(String.self, forKey: .authorName)
         self.kind = try container.decodeIfPresent(FakeMessageKind.self, forKey: .kind) ?? .text
         self.media = try container.decodeIfPresent(FakeMessageMedia.self, forKey: .media)?.normalized
+        // Records written before read-state support remain compatible and use
+        // the same default as the designated initializer.
+        self.isRead = try container.decodeIfPresent(Bool.self, forKey: .isRead) ?? self.outgoing
     }
 
     // Deterministic, collision-safe globallyUniqueId for insertion (Swift's hashValue is randomized per launch).
@@ -558,6 +567,27 @@ public final class MiraMessageHistoryStore {
             }
             self.fakeCache[index] = record
             self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: [record], removedIds: nil))
+            self.persistFakeSnapshotLocked()
+            self.publishFakeMessagesLocked()
+            return true
+        }
+    }
+
+    /// Updates only the local read marker for a fake message. The marker is
+    /// persisted beside the fake record and is intentionally independent from
+    /// Postbox's cloud read indexes.
+    @discardableResult
+    public func setFakeMessageRead(id: String, isRead: Bool) -> Bool {
+        return self.queue.sync {
+            self.loadFakesIfNeeded()
+            guard let index = self.fakeCache.firstIndex(where: { $0.id == id }) else {
+                return false
+            }
+            guard self.fakeCache[index].isRead != isRead else {
+                return true
+            }
+            self.fakeCache[index].isRead = isRead
+            self.appendFakeMessagesJournalLocked(FakeMessageJournalEntry(records: [self.fakeCache[index]], removedIds: nil))
             self.persistFakeSnapshotLocked()
             self.publishFakeMessagesLocked()
             return true

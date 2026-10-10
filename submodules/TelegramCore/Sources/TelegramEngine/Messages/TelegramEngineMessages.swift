@@ -491,6 +491,21 @@ public extension TelegramEngine {
                 guard let currentMessage = transaction.getMessage(messageId) else {
                     return
                 }
+                var updated = existing
+                updated.text = text
+                updated.date = date
+                if let kind {
+                    updated.kind = kind
+                    updated.media = kind == .text ? nil : media?.normalized
+                }
+                let localMedia = miraFakeMessageMedia(record: updated)
+                let displayText: String
+                if updated.kind != .text && localMedia.isEmpty {
+                    let label = "[\(updated.kind.rawValue.capitalized)]"
+                    displayText = text.isEmpty ? label : "\(label) \(text)"
+                } else {
+                    displayText = text
+                }
                 let forwardInfo = currentMessage.forwardInfo.flatMap(StoreMessageForwardInfo.init)
                 transaction.updateMessage(messageId, update: { _ in
                     return .update(StoreMessage(
@@ -506,19 +521,33 @@ public extension TelegramEngine {
                         localTags: currentMessage.localTags,
                         forwardInfo: forwardInfo,
                         authorId: currentMessage.author?.id,
-                        text: text,
+                        text: displayText,
                         attributes: currentMessage.attributes,
-                        media: currentMessage.media
+                        media: localMedia
                     ))
                 })
-                var updated = existing
-                updated.text = text
-                updated.date = date
-                if let kind {
-                    updated.kind = kind
-                    updated.media = kind == .text ? nil : media?.normalized
-                }
                 _ = account.miraMessageHistoryStore.updateFakeMessage(updated)
+            }
+        }
+
+        /// Changes only the local read marker used by fake-message tooling.
+        /// It deliberately avoids Postbox read indexes and all network APIs.
+        @discardableResult
+        public func miraSetFakeMessageRead(id: String, isRead: Bool) -> Signal<Void, NoError> {
+            let account = self.account
+            guard let existing = account.miraMessageHistoryStore.fakeMessage(id: id),
+                  existing.messageNamespace == Namespaces.Message.Local,
+                  let peerId = MiraMessageHistoryStore.peerId(fromPackedValue: existing.messagePeerId) else {
+                return .complete()
+            }
+            let messageId = MessageId(peerId: peerId, namespace: existing.messageNamespace, id: existing.messageId)
+            return account.postbox.transaction { transaction -> Void in
+                _ = account.miraMessageHistoryStore.setFakeMessageRead(id: id, isRead: isRead)
+                // Touch the local row so active history/list views receive a
+                // deterministic update without changing cloud read state.
+                if existing.messageId != 0, transaction.getMessage(messageId) != nil {
+                    miraTouchMessage(transaction: transaction, id: messageId)
+                }
             }
         }
 
