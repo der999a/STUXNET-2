@@ -19,6 +19,7 @@ public struct MiraFakeGift: Codable, Equatable {
         case fromPeerIdIsPacked
         case fromName
         case caption
+        case ownerPeerId
         case date
         case isHidden
         case isSaved
@@ -39,6 +40,9 @@ public struct MiraFakeGift: Codable, Equatable {
     public var fromPeerIdIsPacked: Bool?
     public var fromName: String?
     public var caption: String?
+    /// Packed local owner used by transferred fake NFTs. It is optional so
+    /// older entries continue to resolve to the current account owner.
+    public var ownerPeerId: Int64?
     public var date: Int32
     public var isHidden: Bool
     public var isSaved: Bool
@@ -77,6 +81,7 @@ public struct MiraFakeGift: Codable, Equatable {
         fromPeerIdIsPacked: Bool? = nil,
         fromName: String? = nil,
         caption: String? = nil,
+        ownerPeerId: Int64? = nil,
         date: Int32,
         isHidden: Bool = false,
         isSaved: Bool = false,
@@ -95,6 +100,7 @@ public struct MiraFakeGift: Codable, Equatable {
         self.fromPeerIdIsPacked = fromPeerIdIsPacked
         self.fromName = fromName
         self.caption = caption
+        self.ownerPeerId = ownerPeerId
         self.date = date
         self.isHidden = isHidden
         self.isSaved = isSaved
@@ -116,6 +122,7 @@ public struct MiraFakeGift: Codable, Equatable {
         self.fromPeerIdIsPacked = try container.decodeIfPresent(Bool.self, forKey: .fromPeerIdIsPacked)
         self.fromName = try container.decodeIfPresent(String.self, forKey: .fromName)
         self.caption = try container.decodeIfPresent(String.self, forKey: .caption)
+        self.ownerPeerId = try container.decodeIfPresent(Int64.self, forKey: .ownerPeerId)
         self.date = try container.decodeIfPresent(Int32.self, forKey: .date) ?? 0
         self.isHidden = try container.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
         self.isSaved = try container.decodeIfPresent(Bool.self, forKey: .isSaved) ?? false
@@ -466,13 +473,24 @@ extension MiraFakeGiftsStore {
                 }
                 var projectedGift = gift
                 if case let .unique(uniqueGift) = gift {
+                    let ownerPeerId = entry.ownerPeerId.flatMap { MiraFakeGift.peerId(fromStoredValue: $0, isPacked: true) } ?? account.peerId
+                    let serverOriginalInfo = uniqueGift.attributes.compactMap { attribute -> (EnginePeer.Id?, Int32, String?, [MessageTextEntity]?)? in
+                        if case let .originalInfo(senderPeerId, _, date, text, entities) = attribute {
+                            return (senderPeerId, date, text, entities)
+                        }
+                        return nil
+                    }.first
                     var attributes = uniqueGift.attributes.filter { $0.attributeType != .originalInfo }
-                    attributes.append(.originalInfo(senderPeerId: fromPeer?.id, recipientPeerId: account.peerId, date: entry.date, text: entry.caption, entities: nil))
+                    if let serverOriginalInfo {
+                        attributes.append(.originalInfo(senderPeerId: serverOriginalInfo.0, recipientPeerId: ownerPeerId, date: serverOriginalInfo.1, text: serverOriginalInfo.2, entities: serverOriginalInfo.3))
+                    } else if entry.fromPeerId != nil || entry.caption != nil {
+                        attributes.append(.originalInfo(senderPeerId: fromPeer?.id, recipientPeerId: ownerPeerId, date: entry.date, text: entry.caption, entities: nil))
+                    }
                     // Keep Telegram's model/pattern/backdrop assets, while the
                     // local sender and recipient drive avatars and profile links.
                     projectedGift = .unique(StarGift.UniqueGift(
                         id: uniqueGift.id, giftId: uniqueGift.giftId, title: uniqueGift.title, number: uniqueGift.number, slug: uniqueGift.slug,
-                        owner: .peerId(account.peerId), attributes: attributes, availability: uniqueGift.availability,
+                        owner: .peerId(ownerPeerId), attributes: attributes, availability: uniqueGift.availability,
                         giftAddress: nil, resellAmounts: nil, resellForTonOnly: false, releasedBy: uniqueGift.releasedBy,
                         valueAmount: uniqueGift.valueAmount, valueCurrency: uniqueGift.valueCurrency, valueUsdAmount: uniqueGift.valueUsdAmount,
                         flags: uniqueGift.flags, themePeerId: uniqueGift.themePeerId, peerColor: uniqueGift.peerColor, hostPeerId: nil,
@@ -651,16 +669,17 @@ extension MiraFakeGiftsStore {
                         number: nil
                     )
                 case .unique:
+                    let ownerPeerId = entry.ownerPeerId.flatMap { MiraFakeGift.peerId(fromStoredValue: $0, isPacked: true) } ?? account.peerId
                     action = .starGiftUnique(
                         gift: resolved.gift,
                         isUpgrade: false,
-                        isTransferred: false,
+                        isTransferred: forcedChatPeerId != nil,
                         savedToProfile: !entry.isHidden || entry.isSaved,
                         canExportDate: nil,
                         transferStars: entry.isUnique ? 0 : nil,
                         isRefunded: false,
                         isPrepaidUpgrade: false,
-                        peerId: account.peerId,
+                        peerId: ownerPeerId,
                         senderId: senderId,
                         savedId: entry.stableSavedId,
                         resaleAmount: nil,
@@ -675,7 +694,7 @@ extension MiraFakeGiftsStore {
                 }
 
                 var flags = StoreMessageFlags()
-                if chatPeerId != account.peerId {
+                if authorId != account.peerId {
                     flags.insert(.Incoming)
                 }
                 let message = StoreMessage(
@@ -809,6 +828,7 @@ extension MiraFakeGiftsStore {
             transferred.id = UUID().uuidString
             transferred.fromPeerId = account.peerId.toInt64()
             transferred.fromPeerIdIsPacked = true
+            transferred.ownerPeerId = recipientPeerId.toInt64()
             transferred.fromName = nil
             transferred.date = Int32(clamping: Int64(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970))
             transferred.chatMessagePeerId = nil

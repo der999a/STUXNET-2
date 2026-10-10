@@ -320,8 +320,6 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId, e
     let state = MiraFakeMessageState(editing: record)
     let versionPromise = ValuePromise<Int>(0, ignoreRepeated: true)
     var dismissImpl: (() -> Void)?
-    let senderResolutionDisposable = MetaDisposable()
-    var isResolvingSender = false
 
     let arguments = MiraFakeMessageControllerArguments(state: state, updated: {
         state.version += 1
@@ -395,7 +393,6 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId, e
         }
 
         let addMessages: (EnginePeer?, String?) -> Void = { author, fallbackName in
-            isResolvingSender = false
             if state.conversationMode {
                 let scriptedMessages: [(text: String, date: Int32, outgoing: Bool)] = texts.enumerated().compactMap { index, rawText in
                     var text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -458,41 +455,11 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId, e
             addMessages(nil, nil)
             return
         }
-        if let value = Int64(sender) {
-            guard value > 0, value <= 0x00ffffffffffffff else {
-                addMessages(nil, sender)
-                return
-            }
-            isResolvingSender = true
-            senderResolutionDisposable.set((context.account.postbox.transaction { transaction -> EnginePeer? in
-                let userPeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(value))
-                return transaction.getPeer(userPeerId).flatMap(EnginePeer.init)
-            } |> deliverOnMainQueue).start(next: { peer in
-                addMessages(peer, sender)
-            }))
-        } else {
-            var name = sender
-            if name.hasPrefix("@") {
-                name = String(name.dropFirst())
-            }
-            if let range = name.range(of: "t.me/", options: .caseInsensitive) {
-                name = String(name[range.upperBound...])
-            }
-            isResolvingSender = true
-            senderResolutionDisposable.set((context.engine.peers.resolvePeerByName(name: name, referrer: nil)
-            |> mapToSignal { result -> Signal<EnginePeer?, NoError> in
-                switch result {
-                case .progress:
-                    return .complete()
-                case let .result(peer):
-                    return .single(peer)
-                }
-            }
-            |> take(1)
-            |> deliverOnMainQueue).start(next: { peer in
-                addMessages(peer, sender)
-            }))
-        }
+        // Fake messages are local by definition. Do not wait for a Telegram
+        // username lookup: an offline account, a stale username, or a slow
+        // network must never block insertion or leave the editor in a spinner
+        // state. The entered sender is retained as local display metadata.
+        addMessages(nil, sender)
     }
 
     let signal = combineLatest(context.sharedContext.presentationData, versionPromise.get())
@@ -550,19 +517,8 @@ public func miraFakeMessageController(context: AccountContext, peerId: PeerId, e
 
         return (controllerState, (listState, arguments))
     }
-    |> afterDisposed {
-        senderResolutionDisposable.dispose()
-    }
 
     let controller = ItemListController(context: context, state: signal)
-    controller.willDisappear = { _ in
-        if isResolvingSender {
-            senderResolutionDisposable.set(nil)
-            isResolvingSender = false
-            state.isSubmitting = false
-            arguments.updated()
-        }
-    }
     dismissImpl = { [weak controller] in
         guard let controller, let navigationController = controller.navigationController as? NavigationController, navigationController.topViewController === controller else {
             return
