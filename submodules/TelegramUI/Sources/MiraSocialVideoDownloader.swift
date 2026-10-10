@@ -35,8 +35,11 @@ public final class MiraSocialVideoDownloader {
     }
 
     private static func download(link: MiraSocialVideoLink, destination saveDestination: MiraSocialVideoDestination) {
-        let task = URLSession.shared.downloadTask(with: link.url) { location, _, _ in
-            guard let location else {
+        let task = URLSession.shared.downloadTask(with: link.url) { location, response, _ in
+            guard let location, let response, response.mimeType?.hasPrefix("video/") == true else {
+                if let location {
+                    try? FileManager.default.removeItem(at: location)
+                }
                 return
             }
             let fileName = "stuxnet-\(UUID().uuidString).mp4"
