@@ -2331,6 +2331,13 @@ private final class ProfileGiftsContextImpl {
         
     func convertStarGift(reference: StarGiftReference) {
         if self.account.miraFakeGiftsStore.isLocalReference(reference, accountPeerId: self.account.peerId) {
+            self.account.miraFakeGiftsStore.convertLocalReference(account: self.account, reference: reference)
+            self.gifts.removeAll(where: { $0.reference == reference })
+            self.filteredGifts.removeAll(where: { $0.reference == reference })
+            if let count = self.count {
+                self.count = max(0, count - 1)
+            }
+            self.pushState()
             return
         }
         self.actionDisposable.set(

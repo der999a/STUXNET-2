@@ -707,4 +707,28 @@ extension MiraFakeGiftsStore {
     public func deleteChatMessage(account: Account, entry: MiraFakeGift) {
         let _ = self.deleteChatMessageSignal(account: account, entry: entry).start()
     }
+
+    /// Converts a local regular gift without ever sending its synthetic
+    /// reference to Telegram. The chat projection and profile entry are
+    /// removed together so a conversion cannot leave a stale gift bubble.
+    public func convertLocalReference(account: Account, reference: StarGiftReference) {
+        guard case let .peer(peerId, savedId) = reference,
+              peerId == account.peerId,
+              MiraFakeGift.isLocalSavedId(savedId) else {
+            return
+        }
+        let entry = self.list().first(where: { $0.stableSavedId == savedId })
+        if let entry {
+            let _ = self.deleteChatMessageSignal(account: account, entry: entry).start(completed: { [weak self] in
+                self?.remove(id: entry.id)
+            })
+        } else {
+            self.queue.async { [weak self] in
+                self?.loadIfNeeded()
+                self?.cache.removeAll(where: { $0.stableSavedId == savedId })
+                self?.saveLocked()
+                self?.publishLocked()
+            }
+        }
+    }
 }
