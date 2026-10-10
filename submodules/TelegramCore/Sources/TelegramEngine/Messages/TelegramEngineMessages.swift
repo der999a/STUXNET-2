@@ -419,7 +419,7 @@ public extension TelegramEngine {
                         date: record.date
                     )
                 }
-                if (peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup || peerId.namespace == Namespaces.Peer.CloudChannel),
+                if peerId.namespace == Namespaces.Peer.CloudUser,
                    case .notIncluded = transaction.getPeerChatListInclusion(peerId) {
                     transaction.updatePeerChatListInclusion(peerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
                 }
@@ -492,7 +492,7 @@ public extension TelegramEngine {
                 // a user peer in the chat list exactly like a normal outgoing
                 // message so opening the chat remains reliable after adding
                 // fake content.
-                if (peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup || peerId.namespace == Namespaces.Peer.CloudChannel),
+                if peerId.namespace == Namespaces.Peer.CloudUser,
                    case .notIncluded = transaction.getPeerChatListInclusion(peerId) {
                     transaction.updatePeerChatListInclusion(peerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
                 }
@@ -653,7 +653,7 @@ public extension TelegramEngine {
                     }
                 }
                 account.miraMessageHistoryStore.addFakeMessages(records)
-                if (peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup || peerId.namespace == Namespaces.Peer.CloudChannel),
+                if peerId.namespace == Namespaces.Peer.CloudUser,
                    case .notIncluded = transaction.getPeerChatListInclusion(peerId) {
                     transaction.updatePeerChatListInclusion(peerId, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
                 }
