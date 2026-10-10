@@ -534,7 +534,7 @@ extension MiraFakeGiftsStore {
     // Inserts a local-only "gift received" action message (same TelegramMediaAction payload as a real one)
     // into the sender's chat, or into Saved Messages when there is no resolvable sender.
     // Returns the entry updated with chatMessagePeerId/chatMessageId for later deletion.
-    public func insertChatMessage(account: Account, entry: MiraFakeGift) -> Signal<MiraFakeGift, NoError> {
+    public func insertChatMessage(account: Account, entry: MiraFakeGift, forcedChatPeerId: PeerId? = nil) -> Signal<MiraFakeGift, NoError> {
         // A persisted entry can outlive its Postbox message (for example after
         // history cleanup, an interrupted migration, or a previous build that
         // used a different local id). Do not trust the cached id blindly: a
@@ -591,7 +591,12 @@ extension MiraFakeGiftsStore {
 
                 let chatPeerId: PeerId
                 let authorId: PeerId
-                if let fromPeer, fromPeer.id != account.peerId {
+                if let forcedChatPeerId {
+                    // Transfers are authored by the local account but belong
+                    // in the selected recipient chat, not Saved Messages.
+                    chatPeerId = forcedChatPeerId
+                    authorId = account.peerId
+                } else if let fromPeer, fromPeer.id != account.peerId {
                     chatPeerId = fromPeer.id
                     authorId = fromPeer.id
                 } else {
@@ -778,7 +783,7 @@ extension MiraFakeGiftsStore {
             transferred.chatMessagePeerId = nil
             transferred.chatMessageId = nil
             transferred.showInChat = true
-            return self.insertChatMessage(account: account, entry: transferred)
+            return self.insertChatMessage(account: account, entry: transferred, forcedChatPeerId: recipientPeerId)
             |> ignoreValues
             |> castError(TransferStarGiftError.self)
         }
