@@ -118,6 +118,10 @@ public extension TelegramEngine {
         }
         
         public func convertStarGift(reference: StarGiftReference) -> Signal<Never, NoError> {
+            if self.account.miraFakeGiftsStore.isLocalReference(reference, accountPeerId: self.account.peerId) {
+                self.account.miraFakeGiftsStore.convertLocalReference(account: self.account, reference: reference)
+                return .complete()
+            }
             return _internal_convertStarGift(account: self.account, reference: reference)
         }
         
