@@ -147,6 +147,9 @@ public struct MiraSettings: Codable, Equatable {
     public var fakeGiftsEnabled: Bool
     public var fakeGiftCount: Int32
     public var fakeRatingEnabled: Bool
+    /// Total Star rating value entered by the user. `fakeRatingLevel` is kept
+    /// as a legacy storage key for settings written by older builds.
+    public var fakeRatingValue: Int64
     public var fakeRatingLevel: Int32
     public var fakePremiumSince: Bool
     
@@ -190,6 +193,31 @@ public struct MiraSettings: Codable, Equatable {
     public var effectiveLocalPremium: Bool {
         return self.localPremium || self.fakePremiumSince
     }
+
+    /// Telegram sends the authoritative level with the profile data. Fake
+    /// profiles do not have that server value, so derive a deterministic level
+    /// from the entered Star total in one place instead of exposing a second,
+    /// contradictory setting. The thresholds are monotonic and saturate at
+    /// the range accepted by the profile badge renderer.
+    public static func starRatingLevel(forStars stars: Int64) -> Int32 {
+        guard stars > 0 else {
+            return 0
+        }
+        var level: Int32 = 0
+        var threshold: Int64 = 1_000
+        while level < 100 && stars >= threshold {
+            level += 1
+            if threshold > Int64.max / 2 {
+                break
+            }
+            threshold *= 2
+        }
+        return level
+    }
+
+    public var effectiveFakeRatingLevel: Int32 {
+        return MiraSettings.starRatingLevel(forStars: self.fakeRatingValue)
+    }
     
     public init(
         ghost: [String: MiraGhostSettings] = [:],
@@ -200,11 +228,12 @@ public struct MiraSettings: Codable, Equatable {
         saveForBots: Bool = false,
         localPremium: Bool = false,
         fakeStarsEnabled: Bool = false,
-        fakeStarsBalance: Int64 = 100000,
+        fakeStarsBalance: Int64 = 0,
         fakeGiftsEnabled: Bool = false,
-        fakeGiftCount: Int32 = 50,
+        fakeGiftCount: Int32 = 0,
         fakeRatingEnabled: Bool = false,
-        fakeRatingLevel: Int32 = 100,
+        fakeRatingValue: Int64 = 0,
+        fakeRatingLevel: Int32 = 0,
         fakePremiumSince: Bool = false,
         deletedMark: String = "🧹",
         editedMark: String = "(edited)",
@@ -245,10 +274,11 @@ public struct MiraSettings: Codable, Equatable {
         self.saveForBots = saveForBots
         self.localPremium = localPremium
         self.fakeStarsEnabled = fakeStarsEnabled
-        self.fakeStarsBalance = fakeStarsBalance
+        self.fakeStarsBalance = max(0, fakeStarsBalance)
         self.fakeGiftsEnabled = fakeGiftsEnabled
-        self.fakeGiftCount = fakeGiftCount
+        self.fakeGiftCount = max(0, fakeGiftCount)
         self.fakeRatingEnabled = fakeRatingEnabled
+        self.fakeRatingValue = max(0, fakeRatingValue)
         self.fakeRatingLevel = fakeRatingLevel
         self.fakePremiumSince = fakePremiumSince
         self.deletedMark = deletedMark
@@ -331,11 +361,13 @@ public struct MiraSettings: Codable, Equatable {
         self.saveForBots = try container.decodeIfPresent(Bool.self, forKey: "saveForBots") ?? false
         self.localPremium = try container.decodeIfPresent(Bool.self, forKey: "localPremium") ?? false
         self.fakeStarsEnabled = try container.decodeIfPresent(Bool.self, forKey: "fakeStarsEnabled") ?? false
-        self.fakeStarsBalance = try container.decodeIfPresent(Int64.self, forKey: "fakeStarsBalance") ?? 100000
+        self.fakeStarsBalance = max(0, try container.decodeIfPresent(Int64.self, forKey: "fakeStarsBalance") ?? 0)
         self.fakeGiftsEnabled = try container.decodeIfPresent(Bool.self, forKey: "fakeGiftsEnabled") ?? false
-        self.fakeGiftCount = try container.decodeIfPresent(Int32.self, forKey: "fakeGiftCount") ?? 50
+        self.fakeGiftCount = max(0, try container.decodeIfPresent(Int32.self, forKey: "fakeGiftCount") ?? 0)
         self.fakeRatingEnabled = try container.decodeIfPresent(Bool.self, forKey: "fakeRatingEnabled") ?? false
-        self.fakeRatingLevel = try container.decodeIfPresent(Int32.self, forKey: "fakeRatingLevel") ?? 100
+        let legacyRatingLevel = try container.decodeIfPresent(Int32.self, forKey: "fakeRatingLevel") ?? 0
+        self.fakeRatingValue = max(0, try container.decodeIfPresent(Int64.self, forKey: "fakeRatingValue") ?? Int64(legacyRatingLevel))
+        self.fakeRatingLevel = legacyRatingLevel
         self.fakePremiumSince = try container.decodeIfPresent(Bool.self, forKey: "fakePremiumSince") ?? false
         self.deletedMark = try container.decodeIfPresent(String.self, forKey: "deletedMark") ?? "🧹"
         self.editedMark = try container.decodeIfPresent(String.self, forKey: "editedMark") ?? "(edited)"
@@ -385,6 +417,7 @@ public struct MiraSettings: Codable, Equatable {
         try container.encode(self.fakeGiftsEnabled, forKey: "fakeGiftsEnabled")
         try container.encode(self.fakeGiftCount, forKey: "fakeGiftCount")
         try container.encode(self.fakeRatingEnabled, forKey: "fakeRatingEnabled")
+        try container.encode(self.fakeRatingValue, forKey: "fakeRatingValue")
         try container.encode(self.fakeRatingLevel, forKey: "fakeRatingLevel")
         try container.encode(self.fakePremiumSince, forKey: "fakePremiumSince")
         try container.encode(self.deletedMark, forKey: "deletedMark")

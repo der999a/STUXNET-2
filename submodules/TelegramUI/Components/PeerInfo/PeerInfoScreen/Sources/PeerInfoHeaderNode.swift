@@ -2040,7 +2040,9 @@ final class PeerInfoHeaderNode: ASDisplayNode {
         
         let miraSettings = self.context.sharedContext.immediateMiraSettings
         if peer?.id == self.context.account.peerId, miraSettings.fakeRatingEnabled {
-            self.currentStarRating = TelegramStarRating(level: miraSettings.fakeRatingLevel, currentLevelStars: 0, stars: 0, nextLevelStars: nil)
+            let ratingValue = max(0, miraSettings.fakeRatingValue)
+            let level = miraSettings.effectiveFakeRatingLevel
+            self.currentStarRating = TelegramStarRating(level: level, currentLevelStars: 0, stars: ratingValue, nextLevelStars: nil)
             self.currentPendingStarRating = nil
         } else if let cachedData = cachedData as? CachedUserData, let starRating = cachedData.starRating {
             self.currentStarRating = starRating

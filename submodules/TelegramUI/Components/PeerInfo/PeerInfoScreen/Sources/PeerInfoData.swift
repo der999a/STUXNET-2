@@ -1246,6 +1246,14 @@ func peerInfoScreenData(
                             return .none
                         }
                         if miraSettings.showRealLastSeen {
+                            // The self account is cached with status `.none` while
+                            // offline, but its lastActivity is still the real
+                            // timestamp. Feed the normal Telegram formatter an
+                            // expired presence so it renders the exact last-seen
+                            // time instead of the misleading "long time ago".
+                            if case .none = presence.status, presence.lastActivity > 0 {
+                                return .presence(TelegramUserPresence(status: .present(until: max(0, presence.lastActivity - 1)), lastActivity: presence.lastActivity))
+                            }
                             return .presence(presence)
                         }
                         if case let .present(until) = presence.status {

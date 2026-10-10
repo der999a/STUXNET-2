@@ -1299,7 +1299,6 @@ public class Account {
         self.localInputActivityManager = PeerInputActivityManager()
         self.accountPresenceManager = AccountPresenceManager(shouldKeepOnlinePresence: self.shouldKeepOnlinePresence.get(), network: network, postbox: postbox, accountPeerId: self.peerId)
         let _ = (postbox.transaction { transaction -> Void in
-            transaction.updatePeerPresencesInternal(presences: [peerId: TelegramUserPresence(status: .none, lastActivity: 0)], merge: { _, updated in return updated })
             transaction.setNeedsPeerGroupMessageStatsSynchronization(groupId: Namespaces.PeerGroup.archive, namespace: Namespaces.Message.Cloud)
         }).start()
         self.notificationAutolockReportManager = NotificationAutolockReportManager(deadline: self.autolockReportDeadline.get(), network: network)

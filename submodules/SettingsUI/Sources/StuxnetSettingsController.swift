@@ -183,6 +183,118 @@ private func stuxnetOptionsPickerController<T: Equatable>(context: AccountContex
     return ItemListController(context: context, state: signal)
 }
 
+private final class StuxnetManualIntegerArguments {
+    var text: String
+    var hasInitialized = false
+    let update: (Int64) -> Void
+
+    init(text: String, update: @escaping (Int64) -> Void) {
+        self.text = text
+        self.update = update
+    }
+}
+
+private enum StuxnetManualIntegerEntry: ItemListNodeEntry {
+    case input(String)
+    case footer(String)
+
+    var section: ItemListSectionId {
+        switch self {
+        case .input:
+            return 0
+        case .footer:
+            return 1
+        }
+    }
+
+    var stableId: Int {
+        switch self {
+        case .input:
+            return 0
+        case .footer:
+            return 1
+        }
+    }
+
+    static func < (lhs: StuxnetManualIntegerEntry, rhs: StuxnetManualIntegerEntry) -> Bool {
+        return lhs.stableId < rhs.stableId
+    }
+
+    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+        let arguments = arguments as! StuxnetManualIntegerArguments
+        switch self {
+        case let .input(text):
+            return ItemListSingleLineInputItem(
+                presentationData: presentationData,
+                systemStyle: .glass,
+                title: NSAttributedString(string: "Value"),
+                text: text,
+                placeholder: "Enter a number",
+                type: .regular(capitalization: false, autocorrection: false),
+                sectionId: self.section,
+                textUpdated: { value in
+                    arguments.text = value
+                    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let parsed = Int64(normalized) {
+                        arguments.update(parsed)
+                    }
+                },
+                action: {}
+            )
+        case let .footer(text):
+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+        }
+    }
+}
+
+private func stuxnetManualIntegerController(
+    context: AccountContext,
+    title: String,
+    currentValue: @escaping (MiraSettings) -> Int64,
+    range: ClosedRange<Int64>,
+    updateValue: @escaping (inout MiraSettings, Int64) -> Void,
+    footer: String
+) -> ViewController {
+    let accountManager = context.sharedContext.accountManager
+    let arguments = StuxnetManualIntegerArguments(text: "", update: { value in
+        let clamped = max(range.lowerBound, min(range.upperBound, value))
+        let _ = updateMiraSettingsInteractively(accountManager: accountManager, { settings in
+            updateValue(&settings, clamped)
+        }).start()
+    })
+    var dismissImpl: (() -> Void)?
+
+    let signal = combineLatest(context.sharedContext.presentationData, miraSettingsSignal(accountManager: accountManager))
+    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, StuxnetManualIntegerArguments)) in
+        if !arguments.hasInitialized {
+            let initial = max(range.lowerBound, min(range.upperBound, currentValue(settings)))
+            arguments.text = String(initial)
+            arguments.hasInitialized = true
+        }
+        let controllerState = ItemListControllerState(
+            presentationData: ItemListPresentationData(presentationData),
+            title: .text(title),
+            leftNavigationButton: nil,
+            rightNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Done), style: .regular, enabled: true, action: {
+                dismissImpl?()
+            }),
+            backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)
+        )
+        let listState = ItemListNodeState(
+            presentationData: ItemListPresentationData(presentationData),
+            entries: [.input(arguments.text), .footer(footer)],
+            style: .blocks
+        )
+        return (controllerState, (listState, arguments))
+    }
+
+    let controller = ItemListController(context: context, state: signal)
+    dismissImpl = { [weak controller] in
+        (controller?.navigationController as? NavigationController)?.popViewController(animated: true)
+    }
+    return controller
+}
+
 // MARK: - Hub
 
 private enum StuxnetHubSection: Int32 {
@@ -1020,7 +1132,7 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
 
     case ratingHeader(String)
     case fakeRatingEnabled(Bool)
-    case fakeRatingLevel(String)
+    case fakeRatingValue(String)
 
     var section: ItemListSectionId {
         switch self {
@@ -1030,7 +1142,7 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
             return StuxnetFakeSection.stars.rawValue
         case .giftsHeader, .fakeGiftsEnabled, .fakeGiftCount, .manageFakeGifts:
             return StuxnetFakeSection.gifts.rawValue
-        case .ratingHeader, .fakeRatingEnabled, .fakeRatingLevel:
+        case .ratingHeader, .fakeRatingEnabled, .fakeRatingValue:
             return StuxnetFakeSection.rating.rawValue
         }
     }
@@ -1059,7 +1171,7 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
             return 9
         case .fakeRatingEnabled:
             return 10
-        case .fakeRatingLevel:
+        case .fakeRatingValue:
             return 11
         }
     }
@@ -1093,17 +1205,11 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
             })
         case let .fakeStarsBalance(label):
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Stars Balance", label: label, sectionId: self.section, style: .blocks, action: {
-                arguments.pushController(stuxnetOptionsPickerController(context: arguments.context, title: "Stars Balance", options: [
-                    (1_000, "1,000"),
-                    (10_000, "10,000"),
-                    (100_000, "100,000"),
-                    (1_000_000, "1,000,000"),
-                    (10_000_000, "10,000,000")
-                ], currentValue: { settings in
-                    return settings.fakeStarsBalance
-                }, updateValue: { settings, value in
+                arguments.pushController(stuxnetManualIntegerController(context: arguments.context, title: "Stars Balance", currentValue: { settings in
+                    settings.fakeStarsBalance
+                }, range: 0 ... Int64.max, updateValue: { settings, value in
                     settings.fakeStarsBalance = value
-                }))
+                }, footer: "Local balance used only by Stuxnet fake Stars and transfers."))
             })
         case let .giftsHeader(text):
             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
@@ -1114,18 +1220,12 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
                 }
             })
         case let .fakeGiftCount(label):
-            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Gift Count", label: label, sectionId: self.section, style: .blocks, action: {
-                arguments.pushController(stuxnetOptionsPickerController(context: arguments.context, title: "Gift Count", options: [
-                    (10, "10"),
-                    (50, "50"),
-                    (100, "100"),
-                    (500, "500"),
-                    (1_000, "1,000")
-                ], currentValue: { settings in
-                    return Int64(settings.fakeGiftCount)
-                }, updateValue: { settings, value in
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Profile gift inventory", label: label, sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetManualIntegerController(context: arguments.context, title: "Profile gift inventory", currentValue: { settings in
+                    Int64(settings.fakeGiftCount)
+                }, range: 0 ... Int64(Int32.max), updateValue: { settings, value in
                     settings.fakeGiftCount = Int32(value)
-                }))
+                }, footer: "Number of locally generated gifts shown in your profile. It does not create server gifts."))
             })
         case .manageFakeGifts:
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Manage Fake Gifts…", label: "", sectionId: self.section, style: .blocks, action: {
@@ -1139,19 +1239,14 @@ private enum StuxnetFakeEntry: ItemListNodeEntry {
                     settings.fakeRatingEnabled = value
                 }
             })
-        case let .fakeRatingLevel(label):
-            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Rating Level", label: label, sectionId: self.section, style: .blocks, action: {
-                arguments.pushController(stuxnetOptionsPickerController(context: arguments.context, title: "Rating Level", options: [
-                    (10, "10"),
-                    (50, "50"),
-                    (100, "100"),
-                    (500, "500"),
-                    (1_000, "1,000")
-                ], currentValue: { settings in
-                    return Int64(settings.fakeRatingLevel)
-                }, updateValue: { settings, value in
-                    settings.fakeRatingLevel = Int32(value)
-                }))
+        case let .fakeRatingValue(label):
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "Rating Stars", label: label, sectionId: self.section, style: .blocks, action: {
+                arguments.pushController(stuxnetManualIntegerController(context: arguments.context, title: "Rating Stars", currentValue: { settings in
+                    settings.fakeRatingValue
+                }, range: 0 ... Int64.max, updateValue: { settings, value in
+                    settings.fakeRatingValue = value
+                    settings.fakeRatingLevel = MiraSettings.starRatingLevel(forStars: value)
+                }, footer: "Enter the total rating value. The Telegram-style level is calculated automatically."))
             })
         }
     }
@@ -1173,7 +1268,9 @@ private func stuxnetFakeEntries(settings: MiraSettings) -> [StuxnetFakeEntry] {
 
     entries.append(.ratingHeader("Rating".uppercased()))
     entries.append(.fakeRatingEnabled(settings.fakeRatingEnabled))
-    entries.append(.fakeRatingLevel(stuxnetFormattedNumber(Int64(settings.fakeRatingLevel))))
+    let ratingValue = settings.fakeRatingValue
+    let ratingLevel = settings.effectiveFakeRatingLevel
+    entries.append(.fakeRatingValue("\(stuxnetFormattedNumber(ratingValue)) · Level \(ratingLevel)"))
     return entries
 }
 
