@@ -27,7 +27,7 @@ private func stuxnetFormattedNumber(_ value: Int64) -> String {
 
 private func stuxnetFormattedGiftInventory(_ value: Int32) -> String {
     let count = Int64(max(0, value))
-    return "\(stuxnetFormattedNumber(count)) \(count == 1 ? \"gift\" : \"gifts\")"
+    return "\(stuxnetFormattedNumber(count)) \(count == 1 ? "gift" : "gifts")"
 }
 
 private func stuxnetSendWithoutSoundString(_ value: Int32) -> String {
@@ -287,7 +287,7 @@ private func stuxnetManualIntegerController(
         )
         let listState = ItemListNodeState(
             presentationData: ItemListPresentationData(presentationData),
-            entries: [.input(arguments.text), .footer(footer)],
+            entries: [StuxnetManualIntegerEntry.input(arguments.text), .footer(footer)],
             style: .blocks
         )
         return (controllerState, (listState, arguments))
