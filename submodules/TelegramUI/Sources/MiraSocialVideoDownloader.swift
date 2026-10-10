@@ -145,7 +145,13 @@ public final class MiraSocialVideoDownloader {
                 return
             }
             PHPhotoLibrary.requestAuthorization { status in
-                guard status == .authorized || status == .limited else {
+                let canSaveToPhotos: Bool
+                if #available(iOS 14.0, *) {
+                    canSaveToPhotos = status == .authorized || status == .limited
+                } else {
+                    canSaveToPhotos = status == .authorized
+                }
+                guard canSaveToPhotos else {
                     return
                 }
                 PHPhotoLibrary.shared().performChanges {
