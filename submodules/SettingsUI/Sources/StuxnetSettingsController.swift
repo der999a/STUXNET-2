@@ -230,7 +230,7 @@ private enum StuxnetManualIntegerEntry: ItemListNodeEntry {
                 title: NSAttributedString(string: "Value"),
                 text: text,
                 placeholder: "Enter a number",
-                type: .regular(capitalization: false, autocorrection: false),
+                type: .number,
                 sectionId: self.section,
                 textUpdated: { value in
                     arguments.text = value

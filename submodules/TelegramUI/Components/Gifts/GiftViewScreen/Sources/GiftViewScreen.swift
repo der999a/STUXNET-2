@@ -5694,7 +5694,23 @@ public class GiftViewScreen: ViewControllerComponentContainer {
                 } else if let numberValue = gift.number {
                     number = numberValue
                 }
-                return (peerId, gift.fromPeer?.id, gift.fromPeer?.debugDisplayTitle, gift.fromPeer?.compactDisplayTitle, messageId, gift.reference, false, gift.gift, gift.date, gift.convertStars, gift.text, gift.entities, gift.nameHidden, gift.savedToProfile, gift.pinnedToTop, false, false, false, gift.canUpgrade, gift.upgradeStars, gift.transferStars, resellAmounts, gift.canExportDate, nil, gift.canTransferDate, gift.canResaleDate, gift.prepaidUpgradeHash, gift.upgradeSeparate, gift.dropOriginalDetailsStars, nil, number, gift.canCraftAt)
+                // Profile entries are normally rendered as owned/outgoing.
+                // A local fake regular gift with a sender is intentionally
+                // marked incoming so Telegram's keep/convert actions are
+                // shown when it is opened from the profile shelf. Keep NFT
+                // entries on their own branch; they must not inherit generic
+                // gift actions.
+                let incoming: Bool = {
+                    guard case .generic = gift.gift,
+                          let reference = gift.reference,
+                          case let .peer(_, savedId) = reference,
+                          MiraFakeGift.isLocalSavedId(savedId),
+                          let fromPeer = gift.fromPeer else {
+                        return false
+                    }
+                    return fromPeer.id != peerId
+                }()
+                return (peerId, gift.fromPeer?.id, gift.fromPeer?.debugDisplayTitle, gift.fromPeer?.compactDisplayTitle, messageId, gift.reference, incoming, gift.gift, gift.date, gift.convertStars, gift.text, gift.entities, gift.nameHidden, gift.savedToProfile, gift.pinnedToTop, false, false, false, gift.canUpgrade, gift.upgradeStars, gift.transferStars, resellAmounts, gift.canExportDate, nil, gift.canTransferDate, gift.canResaleDate, gift.prepaidUpgradeHash, gift.upgradeSeparate, gift.dropOriginalDetailsStars, nil, number, gift.canCraftAt)
             case .soldOutGift:
                 return nil
             case .upgradePreview:
