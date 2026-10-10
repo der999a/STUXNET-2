@@ -769,7 +769,7 @@ extension MiraFakeGiftsStore {
         }
         let remove = self.deleteChatMessageSignal(account: account, entry: source)
         return remove
-        |> mapToSignal { [weak self] _ -> Signal<Never, TransferStarGiftError> in
+        |> mapToSignal { [weak self] _ -> Signal<Never, NoError> in
             guard let self else {
                 return .complete()
             }
@@ -785,7 +785,7 @@ extension MiraFakeGiftsStore {
             transferred.showInChat = true
             return self.insertChatMessage(account: account, entry: transferred, forcedChatPeerId: recipientPeerId)
             |> ignoreValues
-            |> castError(TransferStarGiftError.self)
         }
+        |> castError(TransferStarGiftError.self)
     }
 }
