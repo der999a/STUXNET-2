@@ -382,6 +382,30 @@ public struct MiraLocalPeerOverride: Codable, Equatable {
         self.role = role
     }
 
+    /// Persist the raw-value enum in a keyed field. The adapted Postbox
+    /// Codable bridge intentionally does not implement single-value
+    /// containers, which synthesized enum Codable would request here.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: StringCodingKey.self)
+        self.username = MiraLocalPeerOverride.normalizedHandle(try container.decodeIfPresent(String.self, forKey: "username"))
+        self.tag = MiraLocalPeerOverride.normalizedHandle(try container.decodeIfPresent(String.self, forKey: "tag"))
+        self.phone = MiraLocalPeerOverride.normalizedText(try container.decodeIfPresent(String.self, forKey: "phone"))
+        self.firstName = MiraLocalPeerOverride.normalizedText(try container.decodeIfPresent(String.self, forKey: "firstName"))
+        self.lastName = MiraLocalPeerOverride.normalizedText(try container.decodeIfPresent(String.self, forKey: "lastName"))
+        let roleValue = try container.decodeIfPresent(String.self, forKey: "role") ?? MiraLocalPeerRole.none.rawValue
+        self.role = MiraLocalPeerRole(rawValue: roleValue) ?? .none
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: StringCodingKey.self)
+        try container.encodeIfPresent(self.username, forKey: "username")
+        try container.encodeIfPresent(self.tag, forKey: "tag")
+        try container.encodeIfPresent(self.phone, forKey: "phone")
+        try container.encodeIfPresent(self.firstName, forKey: "firstName")
+        try container.encodeIfPresent(self.lastName, forKey: "lastName")
+        try container.encode(self.role.rawValue, forKey: "role")
+    }
+
     public var isEmpty: Bool {
         return self.username == nil && self.tag == nil && self.phone == nil && self.firstName == nil && self.lastName == nil && self.role == .none
     }
