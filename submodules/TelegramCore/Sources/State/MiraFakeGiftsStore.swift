@@ -781,7 +781,11 @@ extension MiraFakeGiftsStore {
               peerId == account.peerId,
               MiraFakeGift.isLocalSavedId(savedId),
               let source = self.list().first(where: { $0.stableSavedId == savedId }),
-              source.isUnique else {
+              source.isUnique,
+              source.giftSnapshot != nil else {
+            // A local NFT without its catalog snapshot cannot produce a
+            // Telegram-shaped action message. Keep the source and Stars
+            // balance intact until the editor resolves the gift.
             return .fail(.generic)
         }
         let transferFee = source.transferStars ?? 0
