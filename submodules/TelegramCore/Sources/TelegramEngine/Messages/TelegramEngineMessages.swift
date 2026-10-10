@@ -37,6 +37,82 @@ public final class StoryPreloadInfo {
     }
 }
 
+/// Resolves only an existing local filesystem resource for a fake message.
+/// Remote URLs and labels are deliberately ignored: fake content must never
+/// trigger a download or an upload as a side effect of opening a chat.
+private func miraFakeMessageMedia(record: FakeMessageRecord) -> [Media] {
+    guard let descriptor = record.media, descriptor.kind != .stars, descriptor.kind != .service,
+          let resourceValue = descriptor.resource?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !resourceValue.isEmpty else {
+        return []
+    }
+    let path: String
+    if let url = URL(string: resourceValue), url.isFileURL {
+        path = url.path
+    } else {
+        path = (resourceValue as NSString).expandingTildeInPath
+    }
+    guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path) else {
+        return []
+    }
+    let discoveredSize: Int64? = {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let number = attributes[.size] as? NSNumber else {
+            return nil
+        }
+        return number.int64Value
+    }()
+    let fileSize = descriptor.fileSize ?? discoveredSize
+    let randomId = record.stableUniqueId
+    let resource = LocalFileReferenceMediaResource(localFilePath: path, randomId: randomId, size: fileSize)
+    var attributes: [TelegramMediaFileAttribute] = []
+    if let fileName = descriptor.fileName, !fileName.isEmpty {
+        attributes.append(.FileName(fileName: fileName))
+    }
+    switch descriptor.kind {
+    case .photo:
+        let width = max(1, descriptor.width ?? 0)
+        let height = max(1, descriptor.height ?? 0)
+        attributes.append(.ImageSize(size: PixelDimensions(width: width, height: height)))
+    case .video:
+        let width = max(1, descriptor.width ?? 0)
+        let height = max(1, descriptor.height ?? 0)
+        attributes.append(.Video(duration: Double(max(0, descriptor.duration ?? 0)), size: PixelDimensions(width: width, height: height), flags: .supportsStreaming, preloadSize: nil, coverTime: nil, videoCodec: nil))
+    case .audio, .voice:
+        attributes.append(.Audio(isVoice: descriptor.kind == .voice, duration: Int(max(0, descriptor.duration ?? 0)), title: nil, performer: nil, waveform: nil))
+    case .sticker:
+        attributes.append(.Sticker(displayText: "", packReference: nil, maskData: nil))
+    default:
+        break
+    }
+    let mimeType: String
+    if let value = descriptor.mimeType, !value.isEmpty {
+        mimeType = value
+    } else {
+        switch descriptor.kind {
+        case .photo: mimeType = "image/jpeg"
+        case .video: mimeType = "video/mp4"
+        case .audio: mimeType = "audio/mpeg"
+        case .voice: mimeType = "audio/ogg"
+        case .sticker: mimeType = "image/webp"
+        default: mimeType = "application/octet-stream"
+        }
+    }
+    let media = TelegramMediaFile(
+        fileId: MediaId(namespace: Namespaces.Media.LocalFile, id: randomId),
+        partialReference: nil,
+        resource: resource,
+        previewRepresentations: [],
+        videoThumbnails: [],
+        immediateThumbnailData: nil,
+        mimeType: mimeType,
+        size: fileSize,
+        attributes: attributes,
+        alternativeRepresentations: []
+    )
+    return [media]
+}
+
 public final class TelegramGlobalPostSearchState: Codable, Equatable {
     public let totalFreeSearches: Int32
     public let remainingFreeSearches: Int32
@@ -233,10 +309,9 @@ public extension TelegramEngine {
 
         /// Inserts one or more local-only fake messages with a Telegram-like
         /// content descriptor. The descriptor is persisted beside the local
-        /// message and is never passed to the network layer. Postbox media is
-        /// intentionally left empty until a renderer has a local resource it
-        /// can safely resolve; this keeps arbitrary file paths and URLs from
-        /// becoming accidental uploads.
+        /// message and is never passed to the network layer. Existing local
+        /// files are represented with a LocalFileReferenceMediaResource;
+        /// arbitrary paths and URLs remain metadata-only.
         public func miraAddFakeMediaMessages(peerId: PeerId, messages: [(text: String, date: Int32, kind: FakeMessageKind, media: FakeMessageMedia?)], outgoing: Bool, authorPeerId: PeerId? = nil, authorName: String? = nil) -> Signal<Void, NoError> {
             guard !messages.isEmpty else {
                 return .complete()
@@ -257,6 +332,14 @@ public extension TelegramEngine {
                         descriptor = FakeMessageMedia(kind: entry.kind)
                     }
                     let record = FakeMessageRecord(messagePeerId: peerId.toInt64(), text: entry.text, date: entry.date, outgoing: outgoing, authorPeerId: outgoing ? nil : authorPeerId?.toInt64(), authorName: outgoing ? nil : authorName, kind: entry.kind, media: descriptor)
+                    let localMedia = miraFakeMessageMedia(record: record)
+                    let displayText: String
+                    if entry.kind != .text && localMedia.isEmpty {
+                        let label = "[\(entry.kind.rawValue.capitalized)]"
+                        displayText = entry.text.isEmpty ? label : "\(label) \(entry.text)"
+                    } else {
+                        displayText = entry.text
+                    }
                     var flags = StoreMessageFlags()
                     if !outgoing {
                         flags.insert(.Incoming)
@@ -276,9 +359,9 @@ public extension TelegramEngine {
                         localTags: [],
                         forwardInfo: nil,
                         authorId: authorId,
-                        text: entry.text,
+                        text: displayText,
                         attributes: [],
-                        media: []
+                        media: localMedia
                     ))
                     records.append(record)
                 }
