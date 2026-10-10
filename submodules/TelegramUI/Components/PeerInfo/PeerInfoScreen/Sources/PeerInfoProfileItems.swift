@@ -89,6 +89,7 @@ func infoItems(
         let ItemAbout = 3003
         let ItemNote = 3004
         let ItemAppFooter = 3005
+        let ItemMutualContact = 3006
         let ItemAffiliate = 4000
         let ItemAffiliateInfo = 4001
         let ItemBusinessHours = 5000
@@ -203,6 +204,25 @@ func infoItems(
                     }, contextAction: { node, gesture, _ in
                         interaction.openUsernameContextMenu(node, gesture)
                     }, requestLayout: { animated in
+                        interaction.requestLayout(animated)
+                    }
+                )
+            )
+        }
+
+        // Telegram supplies this bit from the authoritative user record. Keep
+        // the indicator local and read-only: deriving it from a username or
+        // phone number would produce false positives for users who are merely
+        // discoverable, and would make fake profile data look server-backed.
+        if user.id != context.account.peerId, user.botInfo == nil, !user.isDeleted {
+            items[currentPeerInfoSection]!.append(
+                PeerInfoScreenLabeledValueItem(
+                    id: ItemMutualContact,
+                    label: "Mutual contact",
+                    text: user.flags.contains(.mutualContact) ? "Yes" : "No",
+                    textColor: .primary,
+                    action: nil,
+                    requestLayout: { animated in
                         interaction.requestLayout(animated)
                     }
                 )
