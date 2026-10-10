@@ -2353,6 +2353,19 @@ private final class ProfileGiftsContextImpl {
     
     func transferStarGift(prepaid: Bool, reference: StarGiftReference, peerId: EnginePeer.Id) -> Signal<Never, TransferStarGiftError> {
         if self.account.miraFakeGiftsStore.isLocalReference(reference, accountPeerId: self.account.peerId) {
+            if let localGift = self.gifts.first(where: { $0.reference == reference }), case .unique = localGift.gift {
+                return self.account.miraFakeGiftsStore.transferLocalReference(account: self.account, reference: reference, recipientPeerId: peerId)
+                |> deliverOn(self.queue)
+                |> afterCompleted { [weak self] in
+                    guard let self else { return }
+                    self.gifts.removeAll(where: { $0.reference == reference })
+                    self.filteredGifts.removeAll(where: { $0.reference == reference })
+                    if let count = self.count {
+                        self.count = max(0, count - 1)
+                    }
+                    self.pushState()
+                }
+            }
             return .fail(.generic)
         }
         if let count = self.count {

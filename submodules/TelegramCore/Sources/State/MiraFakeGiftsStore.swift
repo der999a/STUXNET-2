@@ -780,7 +780,7 @@ extension MiraFakeGiftsStore {
             transferred.showInChat = true
             return self.insertChatMessage(account: account, entry: transferred)
             |> ignoreValues
-            |> mapError { _ in .generic }
+            |> castError(TransferStarGiftError.self)
         }
     }
 }
